@@ -1,0 +1,46 @@
+# Python & pytest caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Native C++/CUDA & Triton build artifacts
+build/
+dist/
+*.egg-info/
+*.so
+*.o
+*.a
+*.pyd
+*.cubin
+*.ptx
+.nv/
+.triton/
+triton_cache/
+
+# Model weights, checkpoints & large data
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.gguf
+*.onnx
+models/
+checkpoints/
+weights/
+huggingface_cache/
+
+# Logs, secrets & OS noise
+*.log
+.env
+.env.*
+.DS_Store
+Thumbs.db
