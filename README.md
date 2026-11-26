@@ -1,16 +1,16 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-light.svg">
-  <img alt="qwen-32k-longctx-train — GPU Systems Lab 03" src="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-light.svg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-dark.svg?v=3">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-light.svg?v=3">
+  <img alt="qwen-32k-longctx-train — GPU Systems Lab 03" src="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-light.svg?v=3" width="100%">
 </picture>
 
 <p align="center">
-  <a href="https://yuri-infra.github.io/#longctx"><strong>⚡ Live Ring &amp; 32K Simulator ↗</strong></a> &nbsp;·&nbsp;
+  <a href="https://yuri-infra.github.io/#longctx"><strong>⚡ Live Simulator ↗</strong></a> &nbsp;·&nbsp;
   <a href="#system-architecture"><strong>Architecture</strong></a> &nbsp;·&nbsp;
-  <a href="benchmarks/local_training_benchmark_report.md"><strong>Benchmark Report</strong></a> &nbsp;·&nbsp;
-  <a href="tests/test_training_all.py"><strong>Test Suite (8/8)</strong></a> &nbsp;·&nbsp;
-  <a href="long_ctx_train/ring_attention.py"><strong>ZigZag Ring Attention</strong></a> &nbsp;·&nbsp;
-  <a href="https://github.com/yuri-infra"><strong>← yuri-infra Profile</strong></a>
+  <a href="benchmarks/local_training_benchmark_report.md"><strong>Benchmarks</strong></a> &nbsp;·&nbsp;
+  <a href="tests/test_training_all.py"><strong>Tests (8/8)</strong></a> &nbsp;·&nbsp;
+  <a href="long_ctx_train/ring_attention.py"><strong>ZigZag Ring</strong></a> &nbsp;·&nbsp;
+  <a href="https://github.com/yuri-infra"><strong>← Profile</strong></a>
 </p>
 
 <p align="center">
@@ -26,9 +26,9 @@
 ## System Architecture
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-light.svg">
-  <img alt="ZigZag Ring Attention, Zero-Atomic Triton FA2, Intra-Layer SAC, and Dual-Stream DMA Architecture" src="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-light.svg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-dark.svg?v=3">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-light.svg?v=3">
+  <img alt="ZigZag Ring Attention, Zero-Atomic Triton FA2, Intra-Layer SAC, and Dual-Stream DMA Architecture" src="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-light.svg?v=3" width="100%">
 </picture>
 
 ---

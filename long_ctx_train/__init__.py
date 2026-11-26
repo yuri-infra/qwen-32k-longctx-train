@@ -1,5 +1,5 @@
 """
-AI Infra Project 2: Long-Context LLM Training & Context-Parallel Engine
+qwen-32k-longctx-train: Long-Context LLM Training & Context-Parallel Engine
 (Custom Triton GQA FlashAttention-2 Fwd/Bwd + Real Distributed ZigZag Ring Attention + Selective Layer Checkpointing + Slot-Safe Double-Buffered Async Offload & Prefetch + Chunked Giant-Vocab Cross-Entropy + Real Qwen2.5-0.5B 16K Training)
 """
 

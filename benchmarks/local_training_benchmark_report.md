@@ -1,4 +1,4 @@
-# 项目二实机性能验证报告（真实 24 层 `Qwen2.5-0.5B-Instruct` · 强基线对照 · 真实消费激活 DMA 消融）
+# `qwen-32k-longctx-train` 实机性能验证报告（真实 24 层 `Qwen2.5-0.5B-Instruct` · 强基线对照 · 真实消费激活 DMA 消融）
 
 - **实测时间**：2026-11-20 12:37:21
 - **实测硬件**：`NVIDIA GeForce RTX 5060 Laptop GPU`（`26` SMs，显存 `7.93 GB`）

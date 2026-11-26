@@ -40,20 +40,20 @@
 
   <!-- Base Architectural Card -->
   <g clip-path="url(#clip-card-light-violet)">
-    <rect x="1" y="1" width="848" height="344" fill="#fafcfe"/>
+    <rect x="1" y="1" width="848" height="344" fill="#ffffff"/>
     <rect x="1" y="1" width="848" height="344" fill="url(#grid24-light-violet)"/>
     <rect x="1" y="1" width="848" height="344" fill="url(#rad-light-violet)"/>
     <!-- Left Domain Accent Spine -->
     <rect x="1" y="1" width="4.5" height="344" fill="#7c3aed"/>
   </g>
-  <rect x="1" y="1" width="848" height="344" rx="10" fill="none" stroke="#cbd5e1" stroke-width="1"/>
+  <rect x="1" y="1" width="848" height="344" rx="10" fill="none" stroke="#94a3b8" stroke-width="1.2"/>
   <g fill="none" stroke="#7c3aed" stroke-width="1.5" stroke-opacity="0.58" stroke-linecap="square"><path d="M 12.0 19.0 L 12.0 10.0 L 21.0 10.0"/><path d="M 829.0 10.0 L 838.0 10.0 L 838.0 19.0"/><path d="M 12.0 327.0 L 12.0 336.0 L 21.0 336.0"/><path d="M 829.0 336.0 L 838.0 336.0 L 838.0 327.0"/></g>
   <text x="24" y="30" class="mono" font-size="10.2" font-weight="700" fill="#7c3aed" letter-spacing="0.9">SYSTEM ARCHITECTURE // ZIGZAG RING P2P · ZERO-ATOMIC FA2 · SAC · DUAL-STREAM DMA</text>
-  <text x="826" y="30" class="mono" font-size="9" fill="#64748b" text-anchor="end">SINGLE-8GB 32K STEADY-STATE</text>
+  <text x="826" y="30" class="mono" font-size="9" fill="#475569" text-anchor="end">SINGLE-8GB 32K STEADY-STATE</text>
   <line x1="24" y1="40" x2="826" y2="40" stroke="#dbe4ee" stroke-width="1"/>
   <rect x="24" y="48" width="802" height="86" rx="8" fill="#f5f3ff" fill-opacity="0.48" stroke="#7c3aed" stroke-width="1.15" stroke-dasharray="5 3"/>
   <text x="36" y="63" class="mono" font-size="8.6" font-weight="700" fill="#7c3aed">TIER 1 · ZIGZAG CAUSAL RING ATTENTION (torch.distributed mp.spawn)</text>
-  <text x="814" y="63" class="mono" font-size="8" fill="#64748b" text-anchor="end">batch_isend_irecv (K,V,dK,dV) + FP32 LSE</text>
+  <text x="814" y="63" class="mono" font-size="8" fill="#475569" text-anchor="end">batch_isend_irecv (K,V,dK,dV) + FP32 LSE</text>
   <rect x="38" y="70" width="110" height="28" rx="5" fill="#ffffff" stroke="#7c3aed" stroke-width="1.15"/><text x="64" y="88" class="mono" font-size="9.8" font-weight="700" fill="#7c3aed" text-anchor="middle">R0</text><line x1="84" y1="75" x2="84" y2="93" stroke="#ddd6fe" stroke-width="0.9"/><text x="116" y="88" class="mono" font-size="8.8" fill="#0f172a" text-anchor="middle">[c0, c7]</text>
   <rect x="174" y="70" width="110" height="28" rx="5" fill="#ffffff" stroke="#7c3aed" stroke-width="1.15"/><text x="200" y="88" class="mono" font-size="9.8" font-weight="700" fill="#7c3aed" text-anchor="middle">R1</text><line x1="220" y1="75" x2="220" y2="93" stroke="#ddd6fe" stroke-width="0.9"/><text x="252" y="88" class="mono" font-size="8.8" fill="#0f172a" text-anchor="middle">[c1, c6]</text>
   <rect x="310" y="70" width="110" height="28" rx="5" fill="#ffffff" stroke="#7c3aed" stroke-width="1.15"/><text x="336" y="88" class="mono" font-size="9.8" font-weight="700" fill="#7c3aed" text-anchor="middle">R2</text><line x1="356" y1="75" x2="356" y2="93" stroke="#ddd6fe" stroke-width="0.9"/><text x="388" y="88" class="mono" font-size="8.8" fill="#0f172a" text-anchor="middle">[c2, c5]</text>
@@ -66,7 +66,7 @@
   <rect x="584.0" y="70.0" width="230.0" height="54.0" rx="5" fill="#ffffff" stroke="#ddd6fe" stroke-width="1.15"/>
   <text x="594.0" y="88.0" class="sans" font-size="10.8" font-weight="700" fill="#7c3aed">Symmetric Load Balance</text>
   <text x="594.0" y="102.5" class="mono" font-size="8.35" fill="#7c3aed">P=4 Ratio: 6.99× → 1.00×</text>
-  <text x="594.0" y="115.5" class="mono" font-size="8.35" fill="#64748b">ws=2 Bwd Max Err: 8.58e-6</text>
+  <text x="594.0" y="115.5" class="mono" font-size="8.35" fill="#475569">ws=2 Bwd Max Err: 8.58e-6</text>
   <path d="M 146 134 L 146 147" fill="none" stroke="#7c3aed" stroke-width="1.5" stroke-opacity="0.38" marker-end="url(#arr-vi)"/><path d="M 146 134 L 146 147" class="pkt flow-f3" stroke="#6d28d9" stroke-width="2.1"/>
   <path d="M 412 134 L 412 147" fill="none" stroke="#7c3aed" stroke-width="1.5" stroke-opacity="0.38" marker-end="url(#arr-vi)"/><path d="M 412 134 L 412 147" class="pkt flow-f3" stroke="#6d28d9" stroke-width="2.1"/>
   <rect x="24" y="148" width="802" height="86" rx="8" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.15"/>
@@ -74,7 +74,7 @@
   <rect x="36.0" y="170.0" width="224.0" height="56.0" rx="6" fill="#ffffff" stroke="#ddd6fe" stroke-width="1.15"/>
   <text x="46.0" y="188.0" class="sans" font-size="10.8" font-weight="700" fill="#0f172a">Zero-Atomic Triton FA2</text>
   <text x="46.0" y="202.5" class="mono" font-size="8.35" fill="#334155">GQA 14Q/2KV · O(S) LSE</text>
-  <text x="46.0" y="215.5" class="mono" font-size="8.35" fill="#64748b">24 Fwd + 24 Bwd Hard-Counted</text>
+  <text x="46.0" y="215.5" class="mono" font-size="8.35" fill="#475569">24 Fwd + 24 Bwd Hard-Counted</text>
   <path d="M 260 198 L 286 198" fill="none" stroke="#7c3aed" stroke-width="1.5" stroke-opacity="0.38" marker-end="url(#arr-vi)"/><path d="M 260 198 L 286 198" class="pkt flow-f1" stroke="#6d28d9" stroke-width="2.1"/>
   <rect x="288.0" y="170.0" width="238.0" height="56.0" rx="6" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.15"/>
   <text x="298.0" y="188.0" class="sans" font-size="10.8" font-weight="700" fill="#7c3aed">Intra-Layer SAC (Drop SwiGLU)</text>
@@ -86,7 +86,7 @@
   <text x="564.0" y="202.5" class="mono" font-size="8.35" fill="#334155">Zero-Trunc S-1 · 2^-3 FP16 Scale</text>
   <text x="564.0" y="215.5" class="mono" font-size="8.35" fill="#0284c7">520 MB @ 16K (-93%+) · Prefetch</text>
   <path d="M 140 234 L 140 248" fill="none" stroke="#7c3aed" stroke-width="1.5" stroke-opacity="0.38" marker-end="url(#arr-vi)"/><path d="M 140 234 L 140 248" class="pkt flow-f2" stroke="#6d28d9" stroke-width="2.1"/>
-  <text x="148" y="244" class="mono" font-size="7.4" fill="#64748b">plan</text>
+  <text x="148" y="244" class="mono" font-size="7.4" fill="#475569">plan</text>
   <path d="M 408 234 L 408 248" fill="none" stroke="#0284c7" stroke-width="1.5" stroke-opacity="0.38" marker-start="url(#arr-cy)" marker-end="url(#arr-cy)"/><path d="M 408 234 L 408 248" class="pkt flow-f1" stroke="#0369a1" stroke-width="2.1"/>
   <text x="416" y="244" class="mono" font-size="7.4" fill="#0284c7">D2H / H2D DMA</text>
   <path d="M 684 234 L 684 248" fill="none" stroke="#d97706" stroke-width="1.5" stroke-opacity="0.38" marker-end="url(#arr-am)"/><path d="M 684 234 L 684 248" class="pkt flow-f3" stroke="#d97706" stroke-width="2.1"/>

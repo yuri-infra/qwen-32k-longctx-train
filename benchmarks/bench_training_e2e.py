@@ -1,5 +1,5 @@
 """
-项目二实机端到端评测套件（真实 24 层 `Qwen2.5-0.5B-Instruct` · 强基线公平对照 · 真实消费激活 DMA 掩盖消融 · 8GB 单卡极限长序列探测）
+qwen-32k-longctx-train 实机端到端评测套件（真实 24 层 `Qwen2.5-0.5B-Instruct` · 强基线公平对照 · 真实消费激活 DMA 掩盖消融 · 8GB 单卡极限长序列探测）
 
 严格公平评测原则（彻底杜绝假通信拷贝与 O(S^2) 稻草人基线）：
 1. 真实预训练大模型：全程加载本地真实 **`Qwen/Qwen2.5-0.5B-Instruct`**（`24` 层，`Hidden=896, Inter=4864, 14Q/2KV, Vocab=151936, BF16`）。
@@ -358,7 +358,7 @@ def main():
         return f"{d['fwd_act_mb']:.1f} / {d['act_peak_mb']:.1f} MB | {d['step_ms']:.1f} ms | {d['total_peak_mb']:.0f} MB"
 
     lines = [
-        "# 项目二实机性能验证报告（真实 24 层 `Qwen2.5-0.5B-Instruct` · 强基线对照 · 真实消费激活 DMA 消融）",
+        "# `qwen-32k-longctx-train` 实机性能验证报告（真实 24 层 `Qwen2.5-0.5B-Instruct` · 强基线对照 · 真实消费激活 DMA 消融）",
         "",
         f"- **实测时间**：{time.strftime('%Y-%m-%d %H:%M:%S')}",
         f"- **实测硬件**：`{props.name}`（`{props.multi_processor_count}` SMs，显存 `{props.total_memory / (1024**3):.2f} GB`）",
