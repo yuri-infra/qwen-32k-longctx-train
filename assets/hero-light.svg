@@ -17,19 +17,19 @@
       @keyframes pulseDot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
       
     </style>
-    <clipPath id="clip-card-dark-violet">
+    <clipPath id="clip-card-light-violet">
       <rect x="1" y="1" width="848" height="188" rx="10"/>
     </clipPath>
-    <pattern id="grid24-dark-violet" width="24" height="24" patternUnits="userSpaceOnUse">
-      <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#182232" stroke-width="0.7" stroke-opacity="0.65"/>
-      <circle cx="0" cy="0" r="0.9" fill="#263244" fill-opacity="0.45"/>
+    <pattern id="grid24-light-violet" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#e2e8f0" stroke-width="0.7" stroke-opacity="0.72"/>
+      <circle cx="0" cy="0" r="0.9" fill="#cbd5e1" fill-opacity="0.45"/>
     </pattern>
-    <radialGradient id="rad-dark-violet" cx="82%" cy="32%" r="48%">
-      <stop offset="0%" stop-color="#b57bff" stop-opacity="0.18"/>
-      <stop offset="100%" stop-color="#b57bff" stop-opacity="0"/>
+    <radialGradient id="rad-light-violet" cx="82%" cy="32%" r="48%">
+      <stop offset="0%" stop-color="#6d28d9" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#6d28d9" stop-opacity="0"/>
     </radialGradient>
-    <filter id="glow-dark-violet" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="2.0" result="blur"/>
+    <filter id="glow-light-violet" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.15" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -39,35 +39,35 @@
   </defs>
 
   <!-- Base Architectural Card -->
-  <g clip-path="url(#clip-card-dark-violet)">
-    <rect x="1" y="1" width="848" height="188" fill="#0a101d"/>
-    <rect x="1" y="1" width="848" height="188" fill="url(#grid24-dark-violet)"/>
-    <rect x="1" y="1" width="848" height="188" fill="url(#rad-dark-violet)"/>
+  <g clip-path="url(#clip-card-light-violet)">
+    <rect x="1" y="1" width="848" height="188" fill="#ffffff"/>
+    <rect x="1" y="1" width="848" height="188" fill="url(#grid24-light-violet)"/>
+    <rect x="1" y="1" width="848" height="188" fill="url(#rad-light-violet)"/>
     <!-- Left Domain Accent Spine -->
-    <rect x="1" y="1" width="4.5" height="188" fill="#b57bff"/>
+    <rect x="1" y="1" width="4.5" height="188" fill="#6d28d9"/>
   </g>
-  <rect x="1" y="1" width="848" height="188" rx="10" fill="none" stroke="#1b2a40" stroke-width="1.4"/>
-  <g fill="none" stroke="#b57bff" stroke-width="1.5" stroke-opacity="0.58" stroke-linecap="square"><path d="M 12.0 19.0 L 12.0 10.0 L 21.0 10.0"/><path d="M 829.0 10.0 L 838.0 10.0 L 838.0 19.0"/><path d="M 12.0 171.0 L 12.0 180.0 L 21.0 180.0"/><path d="M 829.0 180.0 L 838.0 180.0 L 838.0 171.0"/></g>
-  <circle cx="32" cy="29" r="3.5" fill="#b57bff" class="pulse" filter="url(#glow-dark-violet)"/>
-  <text x="42" y="32.5" class="mono" font-size="10" font-weight="700" fill="#b57bff" letter-spacing="1.1">YURI-INFRA // GPU SYSTEMS LAB · 03</text>
-  <text x="28" y="64" class="sans" font-size="25" font-weight="800" fill="#f0f6fc" letter-spacing="-0.4">qwen-32k-longctx-train</text>
-  <text x="28" y="87" class="sans" font-size="12.5" font-weight="500" fill="#c9d1d9">ZigZag Ring Attention · Triton FA2 · 单卡 8GB 32K 长上下文训练引擎</text>
-  <text x="28" y="108" class="mono" font-size="9.8" fill="#8b949e">Qwen2.5-0.5B-Instruct (494M BF16) · RTX 5060 8GB · 2-Step Steady-State</text>
-  <line x1="28" y1="118" x2="536" y2="118" stroke="#1e2a3a" stroke-width="1"/>
-  <rect x="554" y="18" width="272" height="98" rx="7" fill="#050912" stroke="#263244" stroke-width="1"/>
-  <g fill="none" stroke="#b57bff" stroke-width="1.5" stroke-opacity="0.52" stroke-linecap="square"><path d="M 559.0 27.5 L 559.0 22.0 L 564.5 22.0"/><path d="M 815.5 22.0 L 821.0 22.0 L 821.0 27.5"/><path d="M 559.0 106.5 L 559.0 112.0 L 564.5 112.0"/><path d="M 815.5 112.0 L 821.0 112.0 L 821.0 106.5"/></g>
-  <text x="568" y="34.5" class="mono" font-size="8.2" font-weight="700" fill="#b57bff" letter-spacing="0.7">ZIGZAG RING // 4-RANK P2P</text>
-  <text x="813" y="34.5" class="mono" font-size="7.8" fill="#8b949e" text-anchor="end">32K CTX</text>
-  <path d="M 612 52 L 768 52 Q 796 52 796 74 Q 796 96 768 96 L 612 96 Q 584 96 584 74 Q 584 52 612 52 Z" fill="none" stroke="#b57bff" stroke-opacity="0.42" stroke-width="1.8"/>
-  <path d="M 612 52 L 768 52 Q 796 52 796 74 Q 796 96 768 96 L 612 96 Q 584 96 584 74 Q 584 52 612 52 Z" class="pkt flow-ring1" stroke="#c4b5fd" stroke-width="2.4" filter="url(#glow-dark-violet)"/>
-  <path d="M 612 52 L 768 52 Q 796 52 796 74 Q 796 96 768 96 L 612 96 Q 584 96 584 74 Q 584 52 612 52 Z" class="pkt flow-ring2" stroke="#22d3ee" stroke-width="2.0" filter="url(#glow-dark-violet)"/>
-  <rect x="572" y="42" width="80" height="20" rx="4" fill="#1a1034" stroke="#b57bff" stroke-width="1.2"/><text x="590" y="55" class="mono" font-size="8.5" font-weight="700" fill="#b57bff" text-anchor="middle">R0</text><text x="625" y="55" class="mono" font-size="8" fill="#f0f6fc" text-anchor="middle">[c0,c7]</text>
-  <rect x="728" y="42" width="80" height="20" rx="4" fill="#1a1034" stroke="#b57bff" stroke-width="1.2"/><text x="746" y="55" class="mono" font-size="8.5" font-weight="700" fill="#b57bff" text-anchor="middle">R1</text><text x="781" y="55" class="mono" font-size="8" fill="#f0f6fc" text-anchor="middle">[c1,c6]</text>
-  <rect x="728" y="84" width="80" height="20" rx="4" fill="#1a1034" stroke="#b57bff" stroke-width="1.2"/><text x="746" y="97" class="mono" font-size="8.5" font-weight="700" fill="#b57bff" text-anchor="middle">R2</text><text x="781" y="97" class="mono" font-size="8" fill="#f0f6fc" text-anchor="middle">[c2,c5]</text>
-  <rect x="572" y="84" width="80" height="20" rx="4" fill="#1a1034" stroke="#b57bff" stroke-width="1.2"/><text x="590" y="97" class="mono" font-size="8.5" font-weight="700" fill="#b57bff" text-anchor="middle">R3</text><text x="625" y="97" class="mono" font-size="8" fill="#f0f6fc" text-anchor="middle">[c3,c4]</text>
-  <rect x="658" y="61" width="64" height="26" rx="5" fill="#111824" stroke="#4c328a" stroke-width="1.1"/><text x="690" y="73" class="mono" font-size="8.5" font-weight="700" fill="#b57bff" text-anchor="middle">1.00× BAL</text><text x="690" y="83" class="mono" font-size="7" fill="#8b949e" text-anchor="middle">P2P K,V,LSE</text>
-  <rect x="28.0" y="128.0" width="190.5" height="46" rx="6" fill="#1a1034" stroke="#4c328a" stroke-width="1"/><rect x="29.0" y="137.0" width="2.8" height="28" rx="1.4" fill="#b57bff"/><text x="40.0" y="150.0" class="mono" font-size="12.5" font-weight="700" fill="#b57bff">32K (32× Ctx)</text><text x="40.0" y="165.5" class="mono" font-size="9.1" fill="#c9d1d9">Single-8GB 2-Step Steady</text>
-  <rect x="230.5" y="128.0" width="190.5" height="46" rx="6" fill="#1a1034" stroke="#4c328a" stroke-width="1"/><rect x="231.5" y="137.0" width="2.8" height="28" rx="1.4" fill="#b57bff"/><text x="242.5" y="150.0" class="mono" font-size="12.5" font-weight="700" fill="#b57bff">-80.6% VRAM</text><text x="242.5" y="165.5" class="mono" font-size="9.1" fill="#c9d1d9">Intra-Layer SAC · 15.13 TF</text>
-  <rect x="433.0" y="128.0" width="190.5" height="46" rx="6" fill="#1a1034" stroke="#4c328a" stroke-width="1"/><rect x="434.0" y="137.0" width="2.8" height="28" rx="1.4" fill="#b57bff"/><text x="445.0" y="150.0" class="mono" font-size="12.5" font-weight="700" fill="#b57bff">6.99× → 1.00×</text><text x="445.0" y="165.5" class="mono" font-size="9.1" fill="#c9d1d9">ZigZag P=4 · 8.58e-6 Err</text>
-  <rect x="635.5" y="128.0" width="190.5" height="46" rx="6" fill="#1a1034" stroke="#4c328a" stroke-width="1"/><rect x="636.5" y="137.0" width="2.8" height="28" rx="1.4" fill="#b57bff"/><text x="647.5" y="150.0" class="mono" font-size="12.5" font-weight="700" fill="#b57bff">100% DMA Hide</text><text x="647.5" y="165.5" class="mono" font-size="9.1" fill="#c9d1d9">55.33 ms Saved vs 52.47 ms</text>
+  <rect x="1" y="1" width="848" height="188" rx="10" fill="none" stroke="#cbd5e1" stroke-width="1.4"/>
+  <g fill="none" stroke="#6d28d9" stroke-width="1.5" stroke-opacity="0.58" stroke-linecap="square"><path d="M 12.0 19.0 L 12.0 10.0 L 21.0 10.0"/><path d="M 829.0 10.0 L 838.0 10.0 L 838.0 19.0"/><path d="M 12.0 171.0 L 12.0 180.0 L 21.0 180.0"/><path d="M 829.0 180.0 L 838.0 180.0 L 838.0 171.0"/></g>
+  <circle cx="32" cy="29" r="3.5" fill="#6d28d9" class="pulse" filter="url(#glow-light-violet)"/>
+  <text x="42" y="32.5" class="mono" font-size="10" font-weight="700" fill="#6d28d9" letter-spacing="1.1">YURI-INFRA // GPU SYSTEMS LAB · 03</text>
+  <text x="28" y="64" class="sans" font-size="25" font-weight="800" fill="#0f172a" letter-spacing="-0.4">qwen-32k-longctx-train</text>
+  <text x="28" y="87" class="sans" font-size="12.5" font-weight="500" fill="#334155">ZigZag Ring Attention · Triton FA2 · 单卡 8GB 32K 长上下文训练引擎</text>
+  <text x="28" y="108" class="mono" font-size="9.8" fill="#64748b">Qwen2.5-0.5B-Instruct (494M BF16) · RTX 5060 8GB · 2-Step Steady-State</text>
+  <line x1="28" y1="118" x2="536" y2="118" stroke="#e2e8f0" stroke-width="1"/>
+  <rect x="554" y="18" width="272" height="98" rx="7" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+  <g fill="none" stroke="#6d28d9" stroke-width="1.5" stroke-opacity="0.52" stroke-linecap="square"><path d="M 559.0 27.5 L 559.0 22.0 L 564.5 22.0"/><path d="M 815.5 22.0 L 821.0 22.0 L 821.0 27.5"/><path d="M 559.0 106.5 L 559.0 112.0 L 564.5 112.0"/><path d="M 815.5 112.0 L 821.0 112.0 L 821.0 106.5"/></g>
+  <text x="568" y="34.5" class="mono" font-size="8.2" font-weight="700" fill="#6d28d9" letter-spacing="0.7">ZIGZAG RING // 4-RANK P2P</text>
+  <text x="813" y="34.5" class="mono" font-size="7.8" fill="#64748b" text-anchor="end">32K CTX</text>
+  <path d="M 612 52 L 768 52 Q 796 52 796 74 Q 796 96 768 96 L 612 96 Q 584 96 584 74 Q 584 52 612 52 Z" fill="none" stroke="#6d28d9" stroke-opacity="0.42" stroke-width="1.8"/>
+  <path d="M 612 52 L 768 52 Q 796 52 796 74 Q 796 96 768 96 L 612 96 Q 584 96 584 74 Q 584 52 612 52 Z" class="pkt flow-ring1" stroke="#7c3aed" stroke-width="2.4" filter="url(#glow-light-violet)"/>
+  <path d="M 612 52 L 768 52 Q 796 52 796 74 Q 796 96 768 96 L 612 96 Q 584 96 584 74 Q 584 52 612 52 Z" class="pkt flow-ring2" stroke="#0284c7" stroke-width="2.0" filter="url(#glow-light-violet)"/>
+  <rect x="572" y="42" width="80" height="20" rx="4" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.2"/><text x="590" y="55" class="mono" font-size="8.5" font-weight="700" fill="#6d28d9" text-anchor="middle">R0</text><text x="625" y="55" class="mono" font-size="8" fill="#0f172a" text-anchor="middle">[c0,c7]</text>
+  <rect x="728" y="42" width="80" height="20" rx="4" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.2"/><text x="746" y="55" class="mono" font-size="8.5" font-weight="700" fill="#6d28d9" text-anchor="middle">R1</text><text x="781" y="55" class="mono" font-size="8" fill="#0f172a" text-anchor="middle">[c1,c6]</text>
+  <rect x="728" y="84" width="80" height="20" rx="4" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.2"/><text x="746" y="97" class="mono" font-size="8.5" font-weight="700" fill="#6d28d9" text-anchor="middle">R2</text><text x="781" y="97" class="mono" font-size="8" fill="#0f172a" text-anchor="middle">[c2,c5]</text>
+  <rect x="572" y="84" width="80" height="20" rx="4" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.2"/><text x="590" y="97" class="mono" font-size="8.5" font-weight="700" fill="#6d28d9" text-anchor="middle">R3</text><text x="625" y="97" class="mono" font-size="8" fill="#0f172a" text-anchor="middle">[c3,c4]</text>
+  <rect x="658" y="61" width="64" height="26" rx="5" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.1"/><text x="690" y="73" class="mono" font-size="8.5" font-weight="700" fill="#6d28d9" text-anchor="middle">1.00× BAL</text><text x="690" y="83" class="mono" font-size="7" fill="#64748b" text-anchor="middle">P2P K,V,LSE</text>
+  <rect x="28.0" y="128.0" width="190.5" height="46" rx="6" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1"/><rect x="29.0" y="137.0" width="2.8" height="28" rx="1.4" fill="#6d28d9"/><text x="40.0" y="150.0" class="mono" font-size="12.5" font-weight="700" fill="#6d28d9">32K (32× Ctx)</text><text x="40.0" y="165.5" class="mono" font-size="9.1" fill="#334155">Single-8GB 2-Step Steady</text>
+  <rect x="230.5" y="128.0" width="190.5" height="46" rx="6" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1"/><rect x="231.5" y="137.0" width="2.8" height="28" rx="1.4" fill="#6d28d9"/><text x="242.5" y="150.0" class="mono" font-size="12.5" font-weight="700" fill="#6d28d9">-80.6% VRAM</text><text x="242.5" y="165.5" class="mono" font-size="9.1" fill="#334155">Intra-Layer SAC · 15.13 TF</text>
+  <rect x="433.0" y="128.0" width="190.5" height="46" rx="6" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1"/><rect x="434.0" y="137.0" width="2.8" height="28" rx="1.4" fill="#6d28d9"/><text x="445.0" y="150.0" class="mono" font-size="12.5" font-weight="700" fill="#6d28d9">6.99× → 1.00×</text><text x="445.0" y="165.5" class="mono" font-size="9.1" fill="#334155">ZigZag P=4 · 8.58e-6 Err</text>
+  <rect x="635.5" y="128.0" width="190.5" height="46" rx="6" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1"/><rect x="636.5" y="137.0" width="2.8" height="28" rx="1.4" fill="#6d28d9"/><text x="647.5" y="150.0" class="mono" font-size="12.5" font-weight="700" fill="#6d28d9">100% DMA Hide</text><text x="647.5" y="165.5" class="mono" font-size="9.1" fill="#334155">55.33 ms Saved vs 52.47 ms</text>
 </svg>

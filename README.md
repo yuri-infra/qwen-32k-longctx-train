@@ -1,7 +1,7 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-dark.svg?v=3">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-light.svg?v=3">
-  <img alt="qwen-32k-longctx-train — GPU Systems Lab 03" src="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-light.svg?v=3" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-dark.svg?v=4">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-light.svg?v=4">
+  <img alt="qwen-32k-longctx-train — GPU Systems Lab 03" src="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/hero-light.svg?v=4" width="100%">
 </picture>
 
 <p align="center">
@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <code>ZigZag Ring P2P</code> &nbsp;<code>Zero-Atomic Triton FA2</code> &nbsp;<code>Intra-Layer SAC</code> &nbsp;<code>152K Chunked CE</code> &nbsp;<code>Dual-Stream Pinned DMA</code> &nbsp;<code>HybridCPUAdamW</code>
+  <code>ZigZag Ring P2P</code> &nbsp;<code>Zero-Atomic Triton FA2</code> &nbsp;<code>Intra-Layer SAC</code> &nbsp;<code>152K Chunked CE</code> &nbsp;<code>Pinned DMA</code> &nbsp;<code>HybridCPUAdamW</code>
 </p>
 
 # qwen-32k-longctx-train · 长上下文大模型训练与分布式 ZigZag 环形注意力引擎
@@ -26,9 +26,9 @@
 ## System Architecture
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-dark.svg?v=3">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-light.svg?v=3">
-  <img alt="ZigZag Ring Attention, Zero-Atomic Triton FA2, Intra-Layer SAC, and Dual-Stream DMA Architecture" src="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-light.svg?v=3" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-dark.svg?v=4">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-light.svg?v=4">
+  <img alt="ZigZag Ring Attention, Zero-Atomic Triton FA2, Intra-Layer SAC, and Dual-Stream DMA Architecture" src="https://raw.githubusercontent.com/yuri-infra/qwen-32k-longctx-train/main/assets/arch-light.svg?v=4" width="100%">
 </picture>
 
 ---
