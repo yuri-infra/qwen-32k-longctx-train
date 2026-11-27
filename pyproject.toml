@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qwen-32k-longctx-train"
+version = "0.1.0"
+description = "Single-8GB-GPU 32K long-context training & sequence parallelism for Qwen2.5-0.5B: zero-atomic Triton FlashAttention-2, ZigZag Ring Attention, SAC, 152K Chunked CE & dual-stream offload."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Hongwei Zhu", email = "zhuhw26@m.fudan.edu.cn" }]
+dependencies = [
+  "torch>=2.5.0",
+  "triton>=3.0.0",
+  "safetensors>=0.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.8.0",
+  "pytest>=8.0.0",
+  "pre-commit>=3.7.0",
+]
+
+[project.urls]
+Homepage = "https://yuri-infra.github.io/#longctx"
+Repository = "https://github.com/yuri-infra/qwen-32k-longctx-train"
+
+[tool.setuptools.packages.find]
+include = ["long_ctx_train*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # isort
+  "UP",  # pyupgrade (modern Python 3.10+ syntax & typing)
+  "B",   # flake8-bugbear
+  "SIM", # flake8-simplify
+  "ISC", # flake8-implicit-str-concat
+]
+ignore = [
+  "E501",   # handled by ruff format; avoids wrapping long CJK prose / report tables
+  "E741",   # mathematical single-letter symbols (l, O, I) in GPU kernels
+  "SIM108", # prefer explicit if/else readability over dense ternaries
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["long_ctx_train"]
+combine-as-imports = true
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*.py" = ["E402"]
+"benchmarks/*.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

@@ -20,13 +20,13 @@
    - 针对整行被掩码的边界（如 Ring Attention 远端未来分片）做 `lse == -inf` 防 NaN 保护。
 """
 
-from typing import Dict, Optional, Tuple
 import math
+
 import torch
 import triton
 import triton.language as tl
 
-FLASH_ATTN_COUNTERS: Dict[str, int] = {
+FLASH_ATTN_COUNTERS: dict[str, int] = {
     "fwd": 0,
     "bwd": 0,
 }
@@ -37,7 +37,7 @@ def reset_flash_attn_counters() -> None:
         FLASH_ATTN_COUNTERS[k] = 0
 
 
-def get_flash_attn_counters() -> Dict[str, int]:
+def get_flash_attn_counters() -> dict[str, int]:
     return dict(FLASH_ATTN_COUNTERS)
 
 
@@ -49,6 +49,7 @@ def _ensure_contiguous_last_dim(x: torch.Tensor) -> torch.Tensor:
 # 1. Triton FlashAttention-2 Forward Kernel
 # ==============================================================================
 
+
 @triton.jit
 def _flash_attn_fwd_kernel(
     Q_ptr,
@@ -58,11 +59,20 @@ def _flash_attn_fwd_kernel(
     LSE_ptr,
     QPos_ptr,
     KPos_ptr,
-    stride_qb, stride_qs, stride_qh,
-    stride_kb, stride_ks, stride_kh,
-    stride_vb, stride_vs, stride_vh,
-    stride_ob, stride_os, stride_oh,
-    stride_lb, stride_lh,
+    stride_qb,
+    stride_qs,
+    stride_qh,
+    stride_kb,
+    stride_ks,
+    stride_kh,
+    stride_vb,
+    stride_vs,
+    stride_vh,
+    stride_ob,
+    stride_os,
+    stride_oh,
+    stride_lb,
+    stride_lh,
     stride_qpb,
     stride_kpb,
     Sq,
@@ -88,7 +98,13 @@ def _flash_attn_fwd_kernel(
     mask_m = offs_m < Sq
     offs_d = tl.arange(0, HEAD_DIM)
 
-    q_ptrs = Q_ptr + b_idx * stride_qb + offs_m[:, None] * stride_qs + q_h * stride_qh + offs_d[None, :]
+    q_ptrs = (
+        Q_ptr
+        + b_idx * stride_qb
+        + offs_m[:, None] * stride_qs
+        + q_h * stride_qh
+        + offs_d[None, :]
+    )
     q_tile = tl.load(q_ptrs, mask=mask_m[:, None], other=0.0)
 
     if HAS_POS_IDS:
@@ -109,8 +125,20 @@ def _flash_attn_fwd_kernel(
         offs_n = start_n + tl.arange(0, BLOCK_N)
         mask_n = offs_n < Sk
 
-        k_ptrs = K_ptr + b_idx * stride_kb + offs_n[:, None] * stride_ks + kv_h * stride_kh + offs_d[None, :]
-        v_ptrs = V_ptr + b_idx * stride_vb + offs_n[:, None] * stride_vs + kv_h * stride_vh + offs_d[None, :]
+        k_ptrs = (
+            K_ptr
+            + b_idx * stride_kb
+            + offs_n[:, None] * stride_ks
+            + kv_h * stride_kh
+            + offs_d[None, :]
+        )
+        v_ptrs = (
+            V_ptr
+            + b_idx * stride_vb
+            + offs_n[:, None] * stride_vs
+            + kv_h * stride_vh
+            + offs_d[None, :]
+        )
         k_tile = tl.load(k_ptrs, mask=mask_n[:, None], other=0.0)
         v_tile = tl.load(v_ptrs, mask=mask_n[:, None], other=0.0)
 
@@ -122,7 +150,11 @@ def _flash_attn_fwd_kernel(
         valid_mn = mask_m[:, None] & mask_n[None, :]
         if IS_CAUSAL:
             if HAS_POS_IDS:
-                k_pos = tl.load(KPos_ptr + b_idx * stride_kpb + offs_n, mask=mask_n, other=2147483647)
+                k_pos = tl.load(
+                    KPos_ptr + b_idx * stride_kpb + offs_n,
+                    mask=mask_n,
+                    other=2147483647,
+                )
                 valid_mn = valid_mn & (q_pos[:, None] >= k_pos[None, :])
             else:
                 valid_mn = valid_mn & (offs_m[:, None] >= offs_n[None, :])
@@ -149,7 +181,13 @@ def _flash_attn_fwd_kernel(
     out_tile = tl.where(has_valid[:, None], acc / denom_safe[:, None], 0.0)
     lse_m = tl.where(has_valid, m_i + tl.log(denom_safe), -float("inf"))
 
-    out_ptrs = Out_ptr + b_idx * stride_ob + offs_m[:, None] * stride_os + q_h * stride_oh + offs_d[None, :]
+    out_ptrs = (
+        Out_ptr
+        + b_idx * stride_ob
+        + offs_m[:, None] * stride_os
+        + q_h * stride_oh
+        + offs_d[None, :]
+    )
     tl.store(out_ptrs, out_tile.to(Out_ptr.dtype.element_ty), mask=mask_m[:, None])
 
     lse_ptrs = LSE_ptr + b_idx * stride_lb + q_h * stride_lh + offs_m
@@ -160,14 +198,20 @@ def _flash_attn_fwd_kernel(
 # 2. Triton FlashAttention-2 Backward Kernels (Preprocess + Atomic-Free GQA dK/dV + dQ)
 # ==============================================================================
 
+
 @triton.jit
 def _flash_bwd_preprocess_kernel(
     Out_ptr,
     dO_ptr,
     Delta_ptr,
-    stride_ob, stride_os, stride_oh,
-    stride_dob, stride_dos, stride_doh,
-    stride_db, stride_dh,
+    stride_ob,
+    stride_os,
+    stride_oh,
+    stride_dob,
+    stride_dos,
+    stride_doh,
+    stride_db,
+    stride_dh,
     Sq,
     Hq: tl.constexpr,
     HEAD_DIM: tl.constexpr,
@@ -182,8 +226,20 @@ def _flash_bwd_preprocess_kernel(
     mask_m = offs_m < Sq
     offs_d = tl.arange(0, HEAD_DIM)
 
-    o_ptrs = Out_ptr + b_idx * stride_ob + offs_m[:, None] * stride_os + q_h * stride_oh + offs_d[None, :]
-    do_ptrs = dO_ptr + b_idx * stride_dob + offs_m[:, None] * stride_dos + q_h * stride_doh + offs_d[None, :]
+    o_ptrs = (
+        Out_ptr
+        + b_idx * stride_ob
+        + offs_m[:, None] * stride_os
+        + q_h * stride_oh
+        + offs_d[None, :]
+    )
+    do_ptrs = (
+        dO_ptr
+        + b_idx * stride_dob
+        + offs_m[:, None] * stride_dos
+        + q_h * stride_doh
+        + offs_d[None, :]
+    )
 
     o_val = tl.load(o_ptrs, mask=mask_m[:, None], other=0.0).to(tl.float32)
     do_val = tl.load(do_ptrs, mask=mask_m[:, None], other=0.0).to(tl.float32)
@@ -205,13 +261,26 @@ def _flash_bwd_dk_dv_kernel(
     dV_ptr,
     QPos_ptr,
     KPos_ptr,
-    stride_qb, stride_qs, stride_qh,
-    stride_kb, stride_ks, stride_kh,
-    stride_vb, stride_vs, stride_vh,
-    stride_dob, stride_dos, stride_doh,
-    stride_lb, stride_lh,
-    stride_dkb, stride_dks, stride_dkh,
-    stride_dvb, stride_dvs, stride_dvh,
+    stride_qb,
+    stride_qs,
+    stride_qh,
+    stride_kb,
+    stride_ks,
+    stride_kh,
+    stride_vb,
+    stride_vs,
+    stride_vh,
+    stride_dob,
+    stride_dos,
+    stride_doh,
+    stride_lb,
+    stride_lh,
+    stride_dkb,
+    stride_dks,
+    stride_dkh,
+    stride_dvb,
+    stride_dvs,
+    stride_dvh,
     stride_qpb,
     stride_kpb,
     Sq,
@@ -236,13 +305,27 @@ def _flash_bwd_dk_dv_kernel(
     mask_n = offs_n < Sk
     offs_d = tl.arange(0, HEAD_DIM)
 
-    k_ptrs = K_ptr + b_idx * stride_kb + offs_n[:, None] * stride_ks + kv_h * stride_kh + offs_d[None, :]
-    v_ptrs = V_ptr + b_idx * stride_vb + offs_n[:, None] * stride_vs + kv_h * stride_vh + offs_d[None, :]
+    k_ptrs = (
+        K_ptr
+        + b_idx * stride_kb
+        + offs_n[:, None] * stride_ks
+        + kv_h * stride_kh
+        + offs_d[None, :]
+    )
+    v_ptrs = (
+        V_ptr
+        + b_idx * stride_vb
+        + offs_n[:, None] * stride_vs
+        + kv_h * stride_vh
+        + offs_d[None, :]
+    )
     k_tile = tl.load(k_ptrs, mask=mask_n[:, None], other=0.0)
     v_tile = tl.load(v_ptrs, mask=mask_n[:, None], other=0.0)
 
     if HAS_POS_IDS:
-        k_pos = tl.load(KPos_ptr + b_idx * stride_kpb + offs_n, mask=mask_n, other=2147483647)
+        k_pos = tl.load(
+            KPos_ptr + b_idx * stride_kpb + offs_n, mask=mask_n, other=2147483647
+        )
     else:
         k_pos = offs_n
 
@@ -260,23 +343,49 @@ def _flash_bwd_dk_dv_kernel(
             offs_m = start_m + tl.arange(0, BLOCK_M)
             mask_m = offs_m < Sq
 
-            q_ptrs = Q_ptr + b_idx * stride_qb + offs_m[:, None] * stride_qs + q_h * stride_qh + offs_d[None, :]
-            do_ptrs = dO_ptr + b_idx * stride_dob + offs_m[:, None] * stride_dos + q_h * stride_doh + offs_d[None, :]
+            q_ptrs = (
+                Q_ptr
+                + b_idx * stride_qb
+                + offs_m[:, None] * stride_qs
+                + q_h * stride_qh
+                + offs_d[None, :]
+            )
+            do_ptrs = (
+                dO_ptr
+                + b_idx * stride_dob
+                + offs_m[:, None] * stride_dos
+                + q_h * stride_doh
+                + offs_d[None, :]
+            )
             q_tile = tl.load(q_ptrs, mask=mask_m[:, None], other=0.0)
             do_tile = tl.load(do_ptrs, mask=mask_m[:, None], other=0.0)
 
-            lse_m = tl.load(LSE_ptr + b_idx * stride_lb + q_h * stride_lh + offs_m, mask=mask_m, other=-float("inf"))
-            delta_m = tl.load(Delta_ptr + b_idx * stride_lb + q_h * stride_lh + offs_m, mask=mask_m, other=0.0)
+            lse_m = tl.load(
+                LSE_ptr + b_idx * stride_lb + q_h * stride_lh + offs_m,
+                mask=mask_m,
+                other=-float("inf"),
+            )
+            delta_m = tl.load(
+                Delta_ptr + b_idx * stride_lb + q_h * stride_lh + offs_m,
+                mask=mask_m,
+                other=0.0,
+            )
 
             if IS_FP32:
-                scores = tl.dot(q_tile, tl.trans(k_tile), input_precision="ieee") * scale
+                scores = (
+                    tl.dot(q_tile, tl.trans(k_tile), input_precision="ieee") * scale
+                )
             else:
                 scores = tl.dot(q_tile, tl.trans(k_tile)) * scale
 
-            valid_mn = mask_m[:, None] & mask_n[None, :] & (lse_m[:, None] > -float("inf"))
+            valid_mn = (
+                mask_m[:, None] & mask_n[None, :] & (lse_m[:, None] > -float("inf"))
+            )
             if IS_CAUSAL:
                 if HAS_POS_IDS:
-                    q_pos = tl.load(QPos_ptr + b_idx * stride_qpb + offs_m, mask=mask_m, other=-1)
+                    q_pos = tl.load(
+                        QPos_ptr + b_idx * stride_qpb + offs_m, mask=mask_m, other=-1
+                    )
                     valid_mn = valid_mn & (q_pos[:, None] >= k_pos[None, :])
                 else:
                     valid_mn = valid_mn & (offs_m[:, None] >= k_pos[None, :])
@@ -297,8 +406,20 @@ def _flash_bwd_dk_dv_kernel(
             else:
                 dk_acc += tl.dot(tl.trans(ds.to(q_tile.dtype)), q_tile)
 
-    dk_ptrs = dK_ptr + b_idx * stride_dkb + offs_n[:, None] * stride_dks + kv_h * stride_dkh + offs_d[None, :]
-    dv_ptrs = dV_ptr + b_idx * stride_dvb + offs_n[:, None] * stride_dvs + kv_h * stride_dvh + offs_d[None, :]
+    dk_ptrs = (
+        dK_ptr
+        + b_idx * stride_dkb
+        + offs_n[:, None] * stride_dks
+        + kv_h * stride_dkh
+        + offs_d[None, :]
+    )
+    dv_ptrs = (
+        dV_ptr
+        + b_idx * stride_dvb
+        + offs_n[:, None] * stride_dvs
+        + kv_h * stride_dvh
+        + offs_d[None, :]
+    )
     tl.store(dk_ptrs, dk_acc.to(dK_ptr.dtype.element_ty), mask=mask_n[:, None])
     tl.store(dv_ptrs, dv_acc.to(dV_ptr.dtype.element_ty), mask=mask_n[:, None])
 
@@ -314,12 +435,23 @@ def _flash_bwd_dq_kernel(
     dQ_ptr,
     QPos_ptr,
     KPos_ptr,
-    stride_qb, stride_qs, stride_qh,
-    stride_kb, stride_ks, stride_kh,
-    stride_vb, stride_vs, stride_vh,
-    stride_dob, stride_dos, stride_doh,
-    stride_lb, stride_lh,
-    stride_dqb, stride_dqs, stride_dqh,
+    stride_qb,
+    stride_qs,
+    stride_qh,
+    stride_kb,
+    stride_ks,
+    stride_kh,
+    stride_vb,
+    stride_vs,
+    stride_vh,
+    stride_dob,
+    stride_dos,
+    stride_doh,
+    stride_lb,
+    stride_lh,
+    stride_dqb,
+    stride_dqs,
+    stride_dqh,
     stride_qpb,
     stride_kpb,
     Sq,
@@ -345,13 +477,31 @@ def _flash_bwd_dq_kernel(
     mask_m = offs_m < Sq
     offs_d = tl.arange(0, HEAD_DIM)
 
-    q_ptrs = Q_ptr + b_idx * stride_qb + offs_m[:, None] * stride_qs + q_h * stride_qh + offs_d[None, :]
-    do_ptrs = dO_ptr + b_idx * stride_dob + offs_m[:, None] * stride_dos + q_h * stride_doh + offs_d[None, :]
+    q_ptrs = (
+        Q_ptr
+        + b_idx * stride_qb
+        + offs_m[:, None] * stride_qs
+        + q_h * stride_qh
+        + offs_d[None, :]
+    )
+    do_ptrs = (
+        dO_ptr
+        + b_idx * stride_dob
+        + offs_m[:, None] * stride_dos
+        + q_h * stride_doh
+        + offs_d[None, :]
+    )
     q_tile = tl.load(q_ptrs, mask=mask_m[:, None], other=0.0)
     do_tile = tl.load(do_ptrs, mask=mask_m[:, None], other=0.0)
 
-    lse_m = tl.load(LSE_ptr + b_idx * stride_lb + q_h * stride_lh + offs_m, mask=mask_m, other=-float("inf"))
-    delta_m = tl.load(Delta_ptr + b_idx * stride_lb + q_h * stride_lh + offs_m, mask=mask_m, other=0.0)
+    lse_m = tl.load(
+        LSE_ptr + b_idx * stride_lb + q_h * stride_lh + offs_m,
+        mask=mask_m,
+        other=-float("inf"),
+    )
+    delta_m = tl.load(
+        Delta_ptr + b_idx * stride_lb + q_h * stride_lh + offs_m, mask=mask_m, other=0.0
+    )
     lse_safe = tl.where(lse_m == -float("inf"), 0.0, lse_m)
 
     if HAS_POS_IDS:
@@ -370,8 +520,20 @@ def _flash_bwd_dq_kernel(
         offs_n = start_n + tl.arange(0, BLOCK_N)
         mask_n = offs_n < Sk
 
-        k_ptrs = K_ptr + b_idx * stride_kb + offs_n[:, None] * stride_ks + kv_h * stride_kh + offs_d[None, :]
-        v_ptrs = V_ptr + b_idx * stride_vb + offs_n[:, None] * stride_vs + kv_h * stride_vh + offs_d[None, :]
+        k_ptrs = (
+            K_ptr
+            + b_idx * stride_kb
+            + offs_n[:, None] * stride_ks
+            + kv_h * stride_kh
+            + offs_d[None, :]
+        )
+        v_ptrs = (
+            V_ptr
+            + b_idx * stride_vb
+            + offs_n[:, None] * stride_vs
+            + kv_h * stride_vh
+            + offs_d[None, :]
+        )
         k_tile = tl.load(k_ptrs, mask=mask_n[:, None], other=0.0)
         v_tile = tl.load(v_ptrs, mask=mask_n[:, None], other=0.0)
 
@@ -383,7 +545,11 @@ def _flash_bwd_dq_kernel(
         valid_mn = mask_m[:, None] & mask_n[None, :] & (lse_m[:, None] > -float("inf"))
         if IS_CAUSAL:
             if HAS_POS_IDS:
-                k_pos = tl.load(KPos_ptr + b_idx * stride_kpb + offs_n, mask=mask_n, other=2147483647)
+                k_pos = tl.load(
+                    KPos_ptr + b_idx * stride_kpb + offs_n,
+                    mask=mask_n,
+                    other=2147483647,
+                )
                 valid_mn = valid_mn & (q_pos[:, None] >= k_pos[None, :])
             else:
                 valid_mn = valid_mn & (q_pos[:, None] >= offs_n[None, :])
@@ -398,7 +564,13 @@ def _flash_bwd_dq_kernel(
             ds = (p * (dp - delta_m[:, None]) * scale).to(k_tile.dtype)
             dq_acc += tl.dot(ds, k_tile)
 
-    dq_ptrs = dQ_ptr + b_idx * stride_dqb + offs_m[:, None] * stride_dqs + q_h * stride_dqh + offs_d[None, :]
+    dq_ptrs = (
+        dQ_ptr
+        + b_idx * stride_dqb
+        + offs_m[:, None] * stride_dqs
+        + q_h * stride_dqh
+        + offs_d[None, :]
+    )
     tl.store(dq_ptrs, dq_acc.to(dQ_ptr.dtype.element_ty), mask=mask_m[:, None])
 
 
@@ -406,19 +578,32 @@ def _flash_bwd_dq_kernel(
 # 3. Python Launch Wrappers & Differentiable Autograd Interface
 # ==============================================================================
 
-def _validate_qkv_inputs(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> Tuple[int, int, int, int, int]:
+
+def _validate_qkv_inputs(
+    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+) -> tuple[int, int, int, int, int]:
     if not (q.ndim == 4 and k.ndim == 4 and v.ndim == 4):
-        raise ValueError(f"Q, K, V 必须为 4D [B, S, H, Dh] 张量，实际维度: {q.shape}, {k.shape}, {v.shape}")
+        raise ValueError(
+            f"Q, K, V 必须为 4D [B, S, H, Dh] 张量，实际维度: {q.shape}, {k.shape}, {v.shape}"
+        )
     if not (q.is_cuda and k.is_cuda and v.is_cuda):
         raise ValueError("Triton FlashAttention 要求 Q, K, V 位于 CUDA 设备上")
     if not (q.device == k.device == v.device):
-        raise ValueError(f"Q, K, V 必须位于同一 CUDA 设备上，实际: {q.device}, {k.device}, {v.device}")
-    if q.dtype != k.dtype or q.dtype != v.dtype or q.dtype not in (torch.float16, torch.bfloat16, torch.float32):
-        raise ValueError(f"Q, K, V 数据类型必须一致且属于 FP16/BF16/FP32，实际: {q.dtype}, {k.dtype}, {v.dtype}")
+        raise ValueError(
+            f"Q, K, V 必须位于同一 CUDA 设备上，实际: {q.device}, {k.device}, {v.device}"
+        )
+    if (
+        q.dtype != k.dtype
+        or q.dtype != v.dtype
+        or q.dtype not in (torch.float16, torch.bfloat16, torch.float32)
+    ):
+        raise ValueError(
+            f"Q, K, V 数据类型必须一致且属于 FP16/BF16/FP32，实际: {q.dtype}, {k.dtype}, {v.dtype}"
+        )
 
     B, Sq, Hq, Dh = q.shape
     Bk, Sk, Hkv, Dhk = k.shape
-    if (Bk, Sk, Hkv, Dhk) != tuple(v.shape) or B != Bk or Dh != Dhk:
+    if (Bk, Sk, Hkv, Dhk) != tuple(v.shape) or Bk != B or Dh != Dhk:
         raise ValueError(f"Q {q.shape}, K {k.shape}, V {v.shape} 形状不匹配")
     if B < 1 or Sq < 1 or Sk < 1:
         raise ValueError(f"Batch 与序列长度必须 >= 1，实际 B={B}, Sq={Sq}, Sk={Sk}")
@@ -429,7 +614,7 @@ def _validate_qkv_inputs(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> T
     return B, Sq, Sk, Hq, Hkv
 
 
-def _select_tile_config(dtype: torch.dtype, head_dim: int) -> Tuple[int, int, int, int]:
+def _select_tile_config(dtype: torch.dtype, head_dim: int) -> tuple[int, int, int, int]:
     if dtype == torch.float32 or head_dim >= 128:
         return 32, 32, 4, 1
     return 64, 64, 4, 2
@@ -440,26 +625,35 @@ def flash_attn_forward_with_lse(
     k: torch.Tensor,
     v: torch.Tensor,
     is_causal: bool = True,
-    scale: Optional[float] = None,
-    q_pos: Optional[torch.Tensor] = None,
-    k_pos: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    scale: float | None = None,
+    q_pos: torch.Tensor | None = None,
+    k_pos: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """执行底层 Triton FlashAttention-2 前向，返回连续 `(out: [B, Sq, Hq, Dh], lse: [B, Hq, Sq] FP32)`"""
     B, Sq, Sk, Hq, Hkv = _validate_qkv_inputs(q, k, v)
     Dh = q.shape[-1]
     has_pos = (q_pos is not None) or (k_pos is not None)
     if has_pos:
-        if q_pos is None or k_pos is None or q_pos.shape != (B, Sq) or k_pos.shape != (B, Sk):
+        if (
+            q_pos is None
+            or k_pos is None
+            or q_pos.shape != (B, Sq)
+            or k_pos.shape != (B, Sk)
+        ):
             raise ValueError(f"q_pos / k_pos 形状必须分别为 {(B, Sq)} 与 {(B, Sk)}")
         if q_pos.device != q.device or k_pos.device != q.device:
-            raise ValueError(f"q_pos ({q_pos.device}) / k_pos ({k_pos.device}) 必须与 Q ({q.device}) 同设备")
+            raise ValueError(
+                f"q_pos ({q_pos.device}) / k_pos ({k_pos.device}) 必须与 Q ({q.device}) 同设备"
+            )
         qp_in = q_pos.to(torch.int32).contiguous()
         kp_in = k_pos.to(torch.int32).contiguous()
         stride_qpb = qp_in.stride(0)
         stride_kpb = kp_in.stride(0)
     else:
         if is_causal and Sq != Sk:
-            raise ValueError(f"未提供显式位置索引时，is_causal=True 要求 Sq == Sk，实际 {Sq} != {Sk}")
+            raise ValueError(
+                f"未提供显式位置索引时，is_causal=True 要求 Sq == Sk，实际 {Sq} != {Sk}"
+            )
         qp_in = q  # dummy pointer
         kp_in = k
         stride_qpb = 0
@@ -487,11 +681,20 @@ def flash_attn_forward_with_lse(
         lse,
         qp_in,
         kp_in,
-        q_in.stride(0), q_in.stride(1), q_in.stride(2),
-        k_in.stride(0), k_in.stride(1), k_in.stride(2),
-        v_in.stride(0), v_in.stride(1), v_in.stride(2),
-        out.stride(0), out.stride(1), out.stride(2),
-        lse.stride(0), lse.stride(1),
+        q_in.stride(0),
+        q_in.stride(1),
+        q_in.stride(2),
+        k_in.stride(0),
+        k_in.stride(1),
+        k_in.stride(2),
+        v_in.stride(0),
+        v_in.stride(1),
+        v_in.stride(2),
+        out.stride(0),
+        out.stride(1),
+        out.stride(2),
+        lse.stride(0),
+        lse.stride(1),
         stride_qpb,
         stride_kpb,
         Sq,
@@ -536,9 +739,14 @@ def compute_flash_bwd_delta(out: torch.Tensor, grad_out: torch.Tensor) -> torch.
         o_in,
         do_in,
         delta,
-        o_in.stride(0), o_in.stride(1), o_in.stride(2),
-        do_in.stride(0), do_in.stride(1), do_in.stride(2),
-        delta.stride(0), delta.stride(1),
+        o_in.stride(0),
+        o_in.stride(1),
+        o_in.stride(2),
+        do_in.stride(0),
+        do_in.stride(1),
+        do_in.stride(2),
+        delta.stride(0),
+        delta.stride(1),
         Sq,
         Hq=Hq,
         HEAD_DIM=Dh,
@@ -556,17 +764,21 @@ def flash_attn_backward_with_lse(
     lse: torch.Tensor,
     delta: torch.Tensor,
     is_causal: bool = True,
-    scale: Optional[float] = None,
-    q_pos: Optional[torch.Tensor] = None,
-    k_pos: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    scale: float | None = None,
+    q_pos: torch.Tensor | None = None,
+    k_pos: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     基于全局 `LSE` 与 `Delta` 在片上 SRAM 重算局部注意力概率并求得 `(dQ, dK, dV)`：
     既可直接用于单卡 FlashAttention-2 反向，也可直接作为 Ring Attention 每步分片梯度核函数！
     """
     B, Sq, Sk, Hq, Hkv = _validate_qkv_inputs(q, k, v)
     Dh = q.shape[-1]
-    if tuple(grad_out.shape) != (B, Sq, Hq, Dh) or grad_out.device != q.device or grad_out.dtype != q.dtype:
+    if (
+        tuple(grad_out.shape) != (B, Sq, Hq, Dh)
+        or grad_out.device != q.device
+        or grad_out.dtype != q.dtype
+    ):
         raise ValueError(
             f"grad_out 形状/设备/dtype 不匹配: 期望 {(B, Sq, Hq, Dh)} {q.dtype} @ {q.device}，"
             f"实际 {grad_out.shape} {grad_out.dtype} @ {grad_out.device}"
@@ -585,17 +797,26 @@ def flash_attn_backward_with_lse(
         )
     has_pos = (q_pos is not None) or (k_pos is not None)
     if has_pos:
-        if q_pos is None or k_pos is None or q_pos.shape != (B, Sq) or k_pos.shape != (B, Sk):
+        if (
+            q_pos is None
+            or k_pos is None
+            or q_pos.shape != (B, Sq)
+            or k_pos.shape != (B, Sk)
+        ):
             raise ValueError(f"q_pos / k_pos 形状必须分别为 {(B, Sq)} 与 {(B, Sk)}")
         if q_pos.device != q.device or k_pos.device != q.device:
-            raise ValueError(f"q_pos ({q_pos.device}) / k_pos ({k_pos.device}) 必须与 Q ({q.device}) 同设备")
+            raise ValueError(
+                f"q_pos ({q_pos.device}) / k_pos ({k_pos.device}) 必须与 Q ({q.device}) 同设备"
+            )
         qp_in = q_pos.to(torch.int32).contiguous()
         kp_in = k_pos.to(torch.int32).contiguous()
         stride_qpb = qp_in.stride(0)
         stride_kpb = kp_in.stride(0)
     else:
         if is_causal and Sq != Sk:
-            raise ValueError(f"未提供显式位置索引时，is_causal=True 要求 Sq == Sk，实际 {Sq} != {Sk}")
+            raise ValueError(
+                f"未提供显式位置索引时，is_causal=True 要求 Sq == Sk，实际 {Sq} != {Sk}"
+            )
         qp_in = q
         kp_in = k
         stride_qpb = 0
@@ -629,13 +850,26 @@ def flash_attn_backward_with_lse(
         dv,
         qp_in,
         kp_in,
-        q_in.stride(0), q_in.stride(1), q_in.stride(2),
-        k_in.stride(0), k_in.stride(1), k_in.stride(2),
-        v_in.stride(0), v_in.stride(1), v_in.stride(2),
-        do_in.stride(0), do_in.stride(1), do_in.stride(2),
-        lse_c.stride(0), lse_c.stride(1),
-        dk.stride(0), dk.stride(1), dk.stride(2),
-        dv.stride(0), dv.stride(1), dv.stride(2),
+        q_in.stride(0),
+        q_in.stride(1),
+        q_in.stride(2),
+        k_in.stride(0),
+        k_in.stride(1),
+        k_in.stride(2),
+        v_in.stride(0),
+        v_in.stride(1),
+        v_in.stride(2),
+        do_in.stride(0),
+        do_in.stride(1),
+        do_in.stride(2),
+        lse_c.stride(0),
+        lse_c.stride(1),
+        dk.stride(0),
+        dk.stride(1),
+        dk.stride(2),
+        dv.stride(0),
+        dv.stride(1),
+        dv.stride(2),
         stride_qpb,
         stride_kpb,
         Sq,
@@ -663,12 +897,23 @@ def flash_attn_backward_with_lse(
         dq,
         qp_in,
         kp_in,
-        q_in.stride(0), q_in.stride(1), q_in.stride(2),
-        k_in.stride(0), k_in.stride(1), k_in.stride(2),
-        v_in.stride(0), v_in.stride(1), v_in.stride(2),
-        do_in.stride(0), do_in.stride(1), do_in.stride(2),
-        lse_c.stride(0), lse_c.stride(1),
-        dq.stride(0), dq.stride(1), dq.stride(2),
+        q_in.stride(0),
+        q_in.stride(1),
+        q_in.stride(2),
+        k_in.stride(0),
+        k_in.stride(1),
+        k_in.stride(2),
+        v_in.stride(0),
+        v_in.stride(1),
+        v_in.stride(2),
+        do_in.stride(0),
+        do_in.stride(1),
+        do_in.stride(2),
+        lse_c.stride(0),
+        lse_c.stride(1),
+        dq.stride(0),
+        dq.stride(1),
+        dq.stride(2),
         stride_qpb,
         stride_kpb,
         Sq,
@@ -696,9 +941,9 @@ class TritonFlashAttentionFunction(torch.autograd.Function):
         k: torch.Tensor,
         v: torch.Tensor,
         is_causal: bool = True,
-        scale: Optional[float] = None,
-        q_pos: Optional[torch.Tensor] = None,
-        k_pos: Optional[torch.Tensor] = None,
+        scale: float | None = None,
+        q_pos: torch.Tensor | None = None,
+        k_pos: torch.Tensor | None = None,
     ) -> torch.Tensor:
         eff_scale = (1.0 / math.sqrt(q.shape[-1])) if scale is None else float(scale)
         out, lse = flash_attn_forward_with_lse(
@@ -742,9 +987,9 @@ def triton_flash_attention(
     k: torch.Tensor,
     v: torch.Tensor,
     is_causal: bool = True,
-    scale: Optional[float] = None,
-    q_pos: Optional[torch.Tensor] = None,
-    k_pos: Optional[torch.Tensor] = None,
+    scale: float | None = None,
+    q_pos: torch.Tensor | None = None,
+    k_pos: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """对外可求导 Triton GQA FlashAttention-2 接口 (`[B, S, Hq, Dh]` -> `[B, S, Hq, Dh]`)"""
     return TritonFlashAttentionFunction.apply(q, k, v, is_causal, scale, q_pos, k_pos)  # type: ignore[return-value]

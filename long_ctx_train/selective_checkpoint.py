@@ -1,26 +1,15 @@
-"""
-层内细粒度选择性激活重计算 (`SelectiveLayerCheckpointFunction`) + 跨流卸载层算子 (`OffloadedLayerCheckpointFunction`) + 大词表分块融合交叉熵 (`ChunkedLinearCrossEntropyLoss`)
+"""层内细粒度选择性激活重计算（SAC）、双缓冲异步卸载层与大词表分块交叉熵。
 
-核心体系结构与显存-算力权衡：
-1. 为什么在已启用 FlashAttention-2 后，长上下文训练依然会爆显存？
-   以真实 `Qwen2.5-0.5B-Instruct` (`H=896, Inter=4864, 14Q/2KV, Vocab=151936, BF16`) 为例：
-   - **痛点一（词表头 Logits 峰值爆炸）**：当 `S = 8,192` 时，单次 `lm_head` 输出 `[1, 8192, 151936]` 占 `2.32 GB`，
-     标准 `F.cross_entropy` 连同反向梯度峰值超过 `6.9 GB`，仅损失层即撑爆 8GB 显卡；
-   - **痛点二（SwiGLU 宽中间层线性激活堆积）**：即便 FlashAttention 已消除 `O(S^2)` 矩阵，标准 Eager Autograd 每层仍需保存
-     `gate_up` (`[B, S, 9728]`) 与 `mlp_act` (`[B, S, 4864]`) 等约 `20,248` 个元素/Token（其中 SwiGLU 中间激活占比高达 `72.1%`！）。
-2. 本模块的三级协同解法：
-   - **分块原地累加交叉熵 (`ChunkedLinearCrossEntropyFunction`)**：沿序列维按 `chunk_size=256` 流式切分计算 **全序列全部 `S-1` 个位置**
-     的精确交叉熵损失，反向通过原地 Softmax 与 cuBLAS `dw_f32.addmm_` 累加词表权重梯度 `dW`，在 `S=16,384, Vocab=151,936` 下将损失层反向额外工作区显存压降至 `520.0 MB`（含返回梯度张量的总增量峰值 `872.0 MB`，对比未分块的 `~13.9 GB` 削减逾 `93%`，且零截断）；
-   - **层内选择性激活重计算 (`SelectiveLayerCheckpointFunction`)**：前向保留紧凑注意力边界张量 `(x, q_r, k_r, v, attn_out, lse, h_mid)`
-     （仅 `~3,868` 元素/Token，削减 **`80.9%`** 层内激活显存），反向**完全跳过** `Q/K/V/O` 投影与 `Triton FlashAttention-2` 前向重算，
-     仅局部重算 SwiGLU 门控激活，显著消除 Full Checkpointing 的 `+33.3%` 全量重算惩罚；
-   - **双缓冲异步卸载层 (`OffloadedLayerCheckpointFunction`)**：对超出 GPU 显存预算的层，通过 `DoubleBufferedOffloadPipeline`
-     将层输入异步 DMA 卸载至 `PinnedActivationPool`（GPU 常驻激活降为 **0 Bytes**），反向提前一层异步 H2D 预取并执行无冗余单趟重算与解析求导（每层总计仅 2 次 SwiGLU，原生支持局部冻结参数 / LoRA）。
+三级显存协同机制：
+- `ChunkedLinearCrossEntropyFunction`：沿序列维分块流式计算全序列精确损失，
+  反向通过原地 Softmax 与 `dw_f32.addmm_` 累加词表梯度（`S=16K, V=152K` 额外工作区压至 `520 MB`）；
+- `SelectiveLayerCheckpointFunction`：前向仅保留紧凑注意力边界张量与 LSE（削减 `80%+` 激活显存），
+  反向跳过 `Q/K/V/O` 与 FA2 重算，仅局部重算宽维 SwiGLU；
+- `OffloadedLayerCheckpointFunction`：经 `DoubleBufferedOffloadPipeline` 异步 DMA 卸载至锁页内存，
+  反向超前一层异步 H2D 预取并单趟解析求导，原生支持 LoRA 局部冻结参数。
 """
 
-from typing import Optional, Tuple
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import triton
 import triton.language as tl
@@ -49,7 +38,9 @@ def _swiglu_packed_fwd_kernel(
     g = tl.load(gu_base + cols, mask=mask, other=0.0).to(tl.float32)
     u = tl.load(gu_base + inter64 + cols, mask=mask, other=0.0).to(tl.float32)
     act = (g * tl.sigmoid(g)) * u
-    tl.store(Out_ptr + row * inter64 + cols, act.to(Out_ptr.dtype.element_ty), mask=mask)
+    tl.store(
+        Out_ptr + row * inter64 + cols, act.to(Out_ptr.dtype.element_ty), mask=mask
+    )
 
 
 @triton.jit
@@ -81,8 +72,15 @@ def _swiglu_packed_bwd_kernel(
 
 def fused_packed_swiglu_fwd(gate_up: torch.Tensor) -> torch.Tensor:
     """对紧凑拼接的 `gate_up: [..., 2 * Inter]` 单 Pass 计算 `silu(gate) * up`，零 FP32 中间显存分配"""
-    if not gate_up.is_cuda or gate_up.ndim < 2 or gate_up.shape[-1] < 2 or gate_up.shape[-1] % 2 != 0:
-        raise ValueError(f"fused_packed_swiglu_fwd 要求 CUDA 张量且末维为 >=2 的偶数，实际: {gate_up.shape} @ {gate_up.device}")
+    if (
+        not gate_up.is_cuda
+        or gate_up.ndim < 2
+        or gate_up.shape[-1] < 2
+        or gate_up.shape[-1] % 2 != 0
+    ):
+        raise ValueError(
+            f"fused_packed_swiglu_fwd 要求 CUDA 张量且末维为 >=2 的偶数，实际: {gate_up.shape} @ {gate_up.device}"
+        )
     gu_c = gate_up.contiguous()
     orig_shape = gu_c.shape
     inter = orig_shape[-1] // 2
@@ -95,14 +93,22 @@ def fused_packed_swiglu_fwd(gate_up: torch.Tensor) -> torch.Tensor:
     return out
 
 
-def fused_packed_swiglu_bwd_inplace(gate_up_2d: torch.Tensor, d_mlp_2d: torch.Tensor) -> torch.Tensor:
+def fused_packed_swiglu_bwd_inplace(
+    gate_up_2d: torch.Tensor, d_mlp_2d: torch.Tensor
+) -> torch.Tensor:
     """单 Pass 计算 SwiGLU 反向并原地写回 `gate_up_2d` 缓冲区 `[M, 2 * Inter]`，彻底消除 `torch.cat` 拷贝与 80MB*8 中间显存！"""
-    if gate_up_2d.ndim != 2 or gate_up_2d.shape[-1] < 2 or gate_up_2d.shape[-1] % 2 != 0:
+    if (
+        gate_up_2d.ndim != 2
+        or gate_up_2d.shape[-1] < 2
+        or gate_up_2d.shape[-1] % 2 != 0
+    ):
         raise ValueError(f"gate_up_2d 形状非法: {gate_up_2d.shape}")
     M, two_inter = gate_up_2d.shape
     inter = two_inter // 2
     if d_mlp_2d.shape != (M, inter) or d_mlp_2d.device != gate_up_2d.device:
-        raise ValueError(f"d_mlp_2d {d_mlp_2d.shape}@{d_mlp_2d.device} 与 gate_up_2d {gate_up_2d.shape}@{gate_up_2d.device} 不匹配")
+        raise ValueError(
+            f"d_mlp_2d {d_mlp_2d.shape}@{d_mlp_2d.device} 与 gate_up_2d {gate_up_2d.shape}@{gate_up_2d.device} 不匹配"
+        )
     dm_c = d_mlp_2d.contiguous()
     block_n = 1024 if inter >= 1024 else 256
     _swiglu_packed_bwd_kernel[(M, triton.cdiv(inter, block_n))](
@@ -129,7 +135,12 @@ class _FusedPackedSwiGLUFunction(torch.autograd.Function):
         dm_c = grad_out.contiguous().view(M, inter)
         block_n = 1024 if inter >= 1024 else 256
         _swiglu_packed_bwd_kernel[(M, triton.cdiv(inter, block_n))](
-            gu_c.view(M, two_inter), dm_c, dgu.view(M, two_inter), inter, BLOCK_N=block_n, num_warps=4
+            gu_c.view(M, two_inter),
+            dm_c,
+            dgu.view(M, two_inter),
+            inter,
+            BLOCK_N=block_n,
+            num_warps=4,
         )
         return dgu
 
@@ -167,10 +178,12 @@ def _rmsnorm_fwd_rstd_kernel(
 
 def rmsnorm_fwd_fp32(
     x: torch.Tensor, weight: torch.Tensor, eps: float, need_rstd: bool = True
-) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     """单 Pass 融合 RMSNorm 前向（可选保存 `[B, S, 1]` FP32 `rstd` 供解析反向使用）"""
     if not (x.is_cuda and weight.is_cuda) or x.device != weight.device:
-        raise ValueError(f"rmsnorm_fwd_fp32 要求 x 与 weight 同处 CUDA 设备，实际 {x.device} vs {weight.device}")
+        raise ValueError(
+            f"rmsnorm_fwd_fp32 要求 x 与 weight 同处 CUDA 设备，实际 {x.device} vs {weight.device}"
+        )
     x_c = x.contiguous()
     H = x_c.shape[-1]
     if weight.ndim != 1 or weight.shape[0] != H:
@@ -196,7 +209,7 @@ def rmsnorm_bwd_fp32(
     x: torch.Tensor,
     weight: torch.Tensor,
     rstd: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """RMSNorm 精确 FP32 解析反向，返回 `(grad_x, grad_weight)`"""
     x_f32 = x.to(torch.float32)
     dy_f32 = grad_out.to(torch.float32)
@@ -227,7 +240,9 @@ class _FusedRMSNormFunction(torch.autograd.Function):
         return dx, dw, None
 
 
-def differentiable_rmsnorm(x: torch.Tensor, weight: torch.Tensor, eps: float) -> torch.Tensor:
+def differentiable_rmsnorm(
+    x: torch.Tensor, weight: torch.Tensor, eps: float
+) -> torch.Tensor:
     """供 Eager / Full-Checkpointing 基线与最终归一化层共享的对称 RMSNorm 算子"""
     return _FusedRMSNormFunction.apply(x, weight, eps)  # type: ignore[return-value]
 
@@ -270,18 +285,26 @@ def _rope_half_kernel(
     tl.store(o_base + HALF_D + d_offs, y2.to(Out_ptr.dtype.element_ty))
 
 
-def _validate_rope_inputs(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> Tuple[int, int, int, int]:
+def _validate_rope_inputs(
+    x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+) -> tuple[int, int, int, int]:
     if x.ndim != 4:
         raise ValueError(f"RoPE 输入必须为 4D [B, S, H, Dh] 张量，实际形状: {x.shape}")
-    if not (x.is_cuda and cos.is_cuda and sin.is_cuda) or not (x.device == cos.device == sin.device):
-        raise ValueError(f"RoPE 要求 x, cos, sin 位于同一 CUDA 设备，实际: {x.device}, {cos.device}, {sin.device}")
+    if not (x.is_cuda and cos.is_cuda and sin.is_cuda) or not (
+        x.device == cos.device == sin.device
+    ):
+        raise ValueError(
+            f"RoPE 要求 x, cos, sin 位于同一 CUDA 设备，实际: {x.device}, {cos.device}, {sin.device}"
+        )
     B, S, H, Dh = x.shape
     if B < 1 or S < 1 or H < 1:
         raise ValueError(f"RoPE 维度必须 >= 1，实际形状: {x.shape}")
     if Dh < 2 or (Dh & (Dh - 1)) != 0:
         raise ValueError(f"RoPE HeadDim 必须为 >= 2 的 2 的幂次，实际 Dh={Dh}")
     if cos.ndim != 2 or sin.ndim != 2 or cos.shape != sin.shape:
-        raise ValueError(f"RoPE cos {cos.shape} 与 sin {sin.shape} 必须为同形状二维张量 [MaxS, Dh]")
+        raise ValueError(
+            f"RoPE cos {cos.shape} 与 sin {sin.shape} 必须为同形状二维张量 [MaxS, Dh]"
+        )
     if cos.shape[0] < S or cos.shape[1] != Dh:
         raise ValueError(
             f"RoPE cos/sin 形状 {cos.shape} 越界或不匹配：需要行数 >= S ({S}) 且列数 == Dh ({Dh})"
@@ -289,12 +312,22 @@ def _validate_rope_inputs(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor)
     return B, S, H, Dh
 
 
-def _rope_fwd_impl(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+def _rope_fwd_impl(
+    x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+) -> torch.Tensor:
     B, S, H, Dh = _validate_rope_inputs(x, cos, sin)
     x_c = x.contiguous()
     out = torch.empty_like(x_c)
     _rope_half_kernel[(B * S * H,)](
-        x_c, cos.contiguous(), sin.contiguous(), out, S, H, HALF_D=Dh // 2, IS_BWD=False, num_warps=2
+        x_c,
+        cos.contiguous(),
+        sin.contiguous(),
+        out,
+        S,
+        H,
+        HALF_D=Dh // 2,
+        IS_BWD=False,
+        num_warps=2,
     )
     return out
 
@@ -307,14 +340,24 @@ def apply_rope_bwd(
     do_c = grad_out.contiguous()
     dx = torch.empty_like(do_c)
     _rope_half_kernel[(B * S * H,)](
-        do_c, cos.contiguous(), sin.contiguous(), dx, S, H, HALF_D=Dh // 2, IS_BWD=True, num_warps=2
+        do_c,
+        cos.contiguous(),
+        sin.contiguous(),
+        dx,
+        S,
+        H,
+        HALF_D=Dh // 2,
+        IS_BWD=True,
+        num_warps=2,
     )
     return dx
 
 
 class _FusedRoPEFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    def forward(
+        ctx, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+    ) -> torch.Tensor:
         ctx.save_for_backward(cos, sin)
         return _rope_fwd_impl(x, cos, sin)
 
@@ -355,13 +398,14 @@ def theoretical_selective_ckpt_flops_overhead(
     attn_dim = float(num_q_heads * head_dim)
 
     f_recomp = 4.0 * s * h * inter
-    f_fwd = 2.0 * s * h * qkv_o_dim + 6.0 * s * h * inter + 2.0 * (s ** 2) * attn_dim
+    f_fwd = 2.0 * s * h * qkv_o_dim + 6.0 * s * h * inter + 2.0 * (s**2) * attn_dim
     return f_recomp / (3.0 * f_fwd)
 
 
 # ==============================================================================
 # 1. 层内细粒度选择性激活重计算算子 (SelectiveLayerCheckpointFunction)
 # ==============================================================================
+
 
 def _layer_analytical_backward(
     grad_out: torch.Tensor,
@@ -387,8 +431,8 @@ def _layer_analytical_backward(
     ffn_norm_w: torch.Tensor,
     gate_up_w: torch.Tensor,
     down_w: torch.Tensor,
-    needs_grad_12: Tuple[bool, ...],
-    precomputed_norm1: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    needs_grad_12: tuple[bool, ...],
+    precomputed_norm1: tuple[torch.Tensor, torch.Tensor] | None = None,
 ):
     (
         need_dx,
@@ -424,12 +468,34 @@ def _layer_analytical_backward(
         dw_down = None
 
     need_before_down = (
-        need_gu or need_ln2 or need_ow or need_qw or need_qb
-        or need_kw or need_kb or need_vw or need_vb or need_ln1 or need_dx
+        need_gu
+        or need_ln2
+        or need_ow
+        or need_qw
+        or need_qb
+        or need_kw
+        or need_kb
+        or need_vw
+        or need_vb
+        or need_ln1
+        or need_dx
     )
     if not need_before_down:
         del norm2, norm2_2d, gate_up_2d, rstd2
-        return (None, None, None, None, None, None, None, None, None, None, None, dw_down)
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            dw_down,
+        )
 
     d_mlp_2d = torch.matmul(dy_2d, down_w)
     d_gate_up_2d = fused_packed_swiglu_bwd_inplace(gate_up_2d, d_mlp_2d)
@@ -439,12 +505,33 @@ def _layer_analytical_backward(
     del norm2, norm2_2d
 
     need_before_gu = (
-        need_ln2 or need_ow or need_qw or need_qb
-        or need_kw or need_kb or need_vw or need_vb or need_ln1 or need_dx
+        need_ln2
+        or need_ow
+        or need_qw
+        or need_qb
+        or need_kw
+        or need_kb
+        or need_vw
+        or need_vb
+        or need_ln1
+        or need_dx
     )
     if not need_before_gu:
         del d_gate_up_2d, rstd2
-        return (None, None, None, None, None, None, None, None, None, None, dw_gate_up, dw_down)
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            dw_gate_up,
+            dw_down,
+        )
 
     d_norm2 = torch.matmul(d_gate_up_2d, gate_up_w).view(B, S, H)
     del d_gate_up_2d
@@ -463,12 +550,46 @@ def _layer_analytical_backward(
     else:
         dw_o = None
 
-    need_attn_sub = need_dx or need_ln1 or need_qw or need_qb or need_kw or need_kb or need_vw or need_vb
+    need_attn_sub = (
+        need_dx
+        or need_ln1
+        or need_qw
+        or need_qb
+        or need_kw
+        or need_kb
+        or need_vw
+        or need_vb
+    )
     if not need_attn_sub:
-        return (None, None, None, None, None, None, None, None, dw_o, dw_ffn_norm, dw_gate_up, dw_down)
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            dw_o,
+            dw_ffn_norm,
+            dw_gate_up,
+            dw_down,
+        )
 
-    need_qkv_bwd = need_qw or need_qb or need_kw or need_kb or need_vw or need_vb or need_ln1 or need_dx
-    if not (need_qw or need_qb or need_kw or need_kb or need_vw or need_vb or need_ln1) and need_dx:
+    need_qkv_bwd = (
+        need_qw
+        or need_qb
+        or need_kw
+        or need_kb
+        or need_vw
+        or need_vb
+        or need_ln1
+        or need_dx
+    )
+    if (
+        not (need_qw or need_qb or need_kw or need_kb or need_vw or need_vb or need_ln1)
+        and need_dx
+    ):
         # 注意：残差支路之外注意力支路仍向 x 贡献 dx_attn，故只要 need_dx=True 也必须求注意力反向
         need_qkv_bwd = True
 
@@ -505,7 +626,9 @@ def _layer_analytical_backward(
         d_norm1_2d.addmm_(dk_2d, k_w)
         d_norm1_2d.addmm_(dv_2d, v_w)
         del dq_2d, dk_2d, dv_2d
-        dx_attn, dw_attn_norm_val = rmsnorm_bwd_fp32(d_norm1_2d.view(B, S, H), x, attn_norm_w, rstd1)
+        dx_attn, dw_attn_norm_val = rmsnorm_bwd_fp32(
+            d_norm1_2d.view(B, S, H), x, attn_norm_w, rstd1
+        )
         dw_attn_norm = dw_attn_norm_val if need_ln1 else None
         dx_total = (dh_mid + dx_attn) if need_dx else None
     else:
@@ -547,11 +670,11 @@ class SelectiveLayerCheckpointFunction(torch.autograd.Function):
         head_dim: int,
         attn_norm_w: torch.Tensor,
         q_w: torch.Tensor,
-        q_b: Optional[torch.Tensor],
+        q_b: torch.Tensor | None,
         k_w: torch.Tensor,
-        k_b: Optional[torch.Tensor],
+        k_b: torch.Tensor | None,
         v_w: torch.Tensor,
-        v_b: Optional[torch.Tensor],
+        v_b: torch.Tensor | None,
         o_w: torch.Tensor,
         ffn_norm_w: torch.Tensor,
         gate_up_w: torch.Tensor,
@@ -587,8 +710,23 @@ class SelectiveLayerCheckpointFunction(torch.autograd.Function):
         ctx.has_qkv_bias = q_b is not None
 
         saved = [
-            x, cos, sin, q_r, k_r, v, attn_out, lse, h_mid,
-            attn_norm_w, q_w, k_w, v_w, o_w, ffn_norm_w, gate_up_w, down_w,
+            x,
+            cos,
+            sin,
+            q_r,
+            k_r,
+            v,
+            attn_out,
+            lse,
+            h_mid,
+            attn_norm_w,
+            q_w,
+            k_w,
+            v_w,
+            o_w,
+            ffn_norm_w,
+            gate_up_w,
+            down_w,
         ]
         ctx.save_for_backward(*saved)
         return out
@@ -596,29 +734,106 @@ class SelectiveLayerCheckpointFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_out: torch.Tensor):
         (
-            x, cos, sin, q_r, k_r, v, attn_out, lse, h_mid,
-            attn_norm_w, q_w, k_w, v_w, o_w, ffn_norm_w, gate_up_w, down_w,
+            x,
+            cos,
+            sin,
+            q_r,
+            k_r,
+            v,
+            attn_out,
+            lse,
+            h_mid,
+            attn_norm_w,
+            q_w,
+            k_w,
+            v_w,
+            o_w,
+            ffn_norm_w,
+            gate_up_w,
+            down_w,
         ) = ctx.saved_tensors
 
         ng = ctx.needs_input_grad
-        needs_12 = (ng[0], ng[7], ng[8], ng[9], ng[10], ng[11], ng[12], ng[13], ng[14], ng[15], ng[16], ng[17])
+        needs_12 = (
+            ng[0],
+            ng[7],
+            ng[8],
+            ng[9],
+            ng[10],
+            ng[11],
+            ng[12],
+            ng[13],
+            ng[14],
+            ng[15],
+            ng[16],
+            ng[17],
+        )
         (
-            dx_total, dw_attn_norm, dw_q, db_q, dw_k, db_k, dw_v, db_v, dw_o, dw_ffn_norm, dw_gate_up, dw_down,
+            dx_total,
+            dw_attn_norm,
+            dw_q,
+            db_q,
+            dw_k,
+            db_k,
+            dw_v,
+            db_v,
+            dw_o,
+            dw_ffn_norm,
+            dw_gate_up,
+            dw_down,
         ) = _layer_analytical_backward(
-            grad_out, x, cos, sin, ctx.eps, ctx.num_q_heads, ctx.num_kv_heads, ctx.head_dim, ctx.has_qkv_bias,
-            q_r, k_r, v, attn_out, lse, h_mid,
-            attn_norm_w, q_w, k_w, v_w, o_w, ffn_norm_w, gate_up_w, down_w,
-            needs_12, precomputed_norm1=None,
+            grad_out,
+            x,
+            cos,
+            sin,
+            ctx.eps,
+            ctx.num_q_heads,
+            ctx.num_kv_heads,
+            ctx.head_dim,
+            ctx.has_qkv_bias,
+            q_r,
+            k_r,
+            v,
+            attn_out,
+            lse,
+            h_mid,
+            attn_norm_w,
+            q_w,
+            k_w,
+            v_w,
+            o_w,
+            ffn_norm_w,
+            gate_up_w,
+            down_w,
+            needs_12,
+            precomputed_norm1=None,
         )
         return (
-            dx_total, None, None, None, None, None, None,
-            dw_attn_norm, dw_q, db_q, dw_k, db_k, dw_v, db_v, dw_o, dw_ffn_norm, dw_gate_up, dw_down,
+            dx_total,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            dw_attn_norm,
+            dw_q,
+            db_q,
+            dw_k,
+            db_k,
+            dw_v,
+            db_v,
+            dw_o,
+            dw_ffn_norm,
+            dw_gate_up,
+            dw_down,
         )
 
 
 # ==============================================================================
 # 2. 双缓冲异步 PCIe 卸载与跨层超前预取层算子 (OffloadedLayerCheckpointFunction)
 # ==============================================================================
+
 
 class OffloadedLayerCheckpointFunction(torch.autograd.Function):
     """
@@ -643,11 +858,11 @@ class OffloadedLayerCheckpointFunction(torch.autograd.Function):
         head_dim: int,
         attn_norm_w: torch.Tensor,
         q_w: torch.Tensor,
-        q_b: Optional[torch.Tensor],
+        q_b: torch.Tensor | None,
         k_w: torch.Tensor,
-        k_b: Optional[torch.Tensor],
+        k_b: torch.Tensor | None,
         v_w: torch.Tensor,
-        v_b: Optional[torch.Tensor],
+        v_b: torch.Tensor | None,
         o_w: torch.Tensor,
         ffn_norm_w: torch.Tensor,
         gate_up_w: torch.Tensor,
@@ -683,7 +898,18 @@ class OffloadedLayerCheckpointFunction(torch.autograd.Function):
             del norm2, mlp_act, h_mid
 
         if needs_any_grad:
-            saved_params = [cos, sin, attn_norm_w, q_w, k_w, v_w, o_w, ffn_norm_w, gate_up_w, down_w]
+            saved_params = [
+                cos,
+                sin,
+                attn_norm_w,
+                q_w,
+                k_w,
+                v_w,
+                o_w,
+                ffn_norm_w,
+                gate_up_w,
+                down_w,
+            ]
             if ctx.has_qkv_bias:
                 assert q_b is not None and k_b is not None and v_b is not None
                 saved_params.extend([q_b, k_b, v_b])
@@ -693,10 +919,14 @@ class OffloadedLayerCheckpointFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_out: torch.Tensor):
         pipeline: DoubleBufferedOffloadPipeline = ctx.pipeline
-        x_restored = pipeline.fetch_for_backward_and_prefetch_prev(ctx.ticket).contiguous()
+        x_restored = pipeline.fetch_for_backward_and_prefetch_prev(
+            ctx.ticket
+        ).contiguous()
 
         saved = ctx.saved_tensors
-        cos, sin, attn_norm_w, q_w, k_w, v_w, o_w, ffn_norm_w, gate_up_w, down_w = saved[:10]
+        cos, sin, attn_norm_w, q_w, k_w, v_w, o_w, ffn_norm_w, gate_up_w, down_w = (
+            saved[:10]
+        )
         if ctx.has_qkv_bias:
             q_b, k_b, v_b = saved[10], saved[11], saved[12]
         else:
@@ -708,7 +938,9 @@ class OffloadedLayerCheckpointFunction(torch.autograd.Function):
         B, S, _ = x_restored.shape
 
         with torch.no_grad():
-            norm1, rstd1 = rmsnorm_fwd_fp32(x_restored, attn_norm_w, ctx.eps, need_rstd=True)
+            norm1, rstd1 = rmsnorm_fwd_fp32(
+                x_restored, attn_norm_w, ctx.eps, need_rstd=True
+            )
             assert rstd1 is not None
             q = F.linear(norm1, q_w, q_b).view(B, S, Hq, Dh)
             k = F.linear(norm1, k_w, k_b).view(B, S, Hkv, Dh)
@@ -720,24 +952,87 @@ class OffloadedLayerCheckpointFunction(torch.autograd.Function):
             h_mid = x_restored + F.linear(attn_out.view(B, S, Hq * Dh), o_w)
 
         ng = ctx.needs_input_grad
-        needs_12 = (ng[0], ng[8], ng[9], ng[10], ng[11], ng[12], ng[13], ng[14], ng[15], ng[16], ng[17], ng[18])
+        needs_12 = (
+            ng[0],
+            ng[8],
+            ng[9],
+            ng[10],
+            ng[11],
+            ng[12],
+            ng[13],
+            ng[14],
+            ng[15],
+            ng[16],
+            ng[17],
+            ng[18],
+        )
         (
-            dx_total, dw_attn_norm, dw_q, db_q, dw_k, db_k, dw_v, db_v, dw_o, dw_ffn_norm, dw_gate_up, dw_down,
+            dx_total,
+            dw_attn_norm,
+            dw_q,
+            db_q,
+            dw_k,
+            db_k,
+            dw_v,
+            db_v,
+            dw_o,
+            dw_ffn_norm,
+            dw_gate_up,
+            dw_down,
         ) = _layer_analytical_backward(
-            grad_out, x_restored, cos, sin, ctx.eps, Hq, Hkv, Dh, ctx.has_qkv_bias,
-            q_r, k_r, v, attn_out, lse, h_mid,
-            attn_norm_w, q_w, k_w, v_w, o_w, ffn_norm_w, gate_up_w, down_w,
-            needs_12, precomputed_norm1=(norm1, rstd1),
+            grad_out,
+            x_restored,
+            cos,
+            sin,
+            ctx.eps,
+            Hq,
+            Hkv,
+            Dh,
+            ctx.has_qkv_bias,
+            q_r,
+            k_r,
+            v,
+            attn_out,
+            lse,
+            h_mid,
+            attn_norm_w,
+            q_w,
+            k_w,
+            v_w,
+            o_w,
+            ffn_norm_w,
+            gate_up_w,
+            down_w,
+            needs_12,
+            precomputed_norm1=(norm1, rstd1),
         )
         return (
-            dx_total, None, None, None, None, None, None, None,
-            dw_attn_norm, dw_q, db_q, dw_k, db_k, dw_v, db_v, dw_o, dw_ffn_norm, dw_gate_up, dw_down,
+            dx_total,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            dw_attn_norm,
+            dw_q,
+            db_q,
+            dw_k,
+            db_k,
+            dw_v,
+            db_v,
+            dw_o,
+            dw_ffn_norm,
+            dw_gate_up,
+            dw_down,
         )
 
 
 # ==============================================================================
 # 3. 大词表零物化流式分块交叉熵损失算子 (ChunkedLinearCrossEntropyFunction)
 # ==============================================================================
+
 
 class ChunkedLinearCrossEntropyFunction(torch.autograd.Function):
     """
@@ -757,14 +1052,16 @@ class ChunkedLinearCrossEntropyFunction(torch.autograd.Function):
         targets_1d: torch.Tensor,
         ignore_index: int = -100,
         chunk_size: int = 256,
-        offload_pipeline: Optional[DoubleBufferedOffloadPipeline] = None,
+        offload_pipeline: DoubleBufferedOffloadPipeline | None = None,
     ) -> torch.Tensor:
         h_c = hidden_2d.contiguous()
         t_c = targets_1d.reshape(-1).to(torch.long).contiguous()
         M, H = h_c.shape
         V, Hw = lm_weight.shape
-        if H != Hw or t_c.numel() != M:
-            raise ValueError(f"ChunkedLinearCrossEntropy 输入维度不匹配: hidden={h_c.shape}, weight={lm_weight.shape}, targets={t_c.shape}")
+        if Hw != H or t_c.numel() != M:
+            raise ValueError(
+                f"ChunkedLinearCrossEntropy 输入维度不匹配: hidden={h_c.shape}, weight={lm_weight.shape}, targets={t_c.shape}"
+            )
 
         valid_mask = t_c != ignore_index
         if bool((valid_mask & ((t_c < 0) | (t_c >= V))).any().item()):
@@ -825,7 +1122,11 @@ class ChunkedLinearCrossEntropyFunction(torch.autograd.Function):
         post_scale = scale / pre_scale
         dh = torch.empty_like(h_c) if need_dh else None
         dw_f32 = (
-            torch.zeros((lm_weight.shape[0], lm_weight.shape[1]), dtype=torch.float32, device=lm_weight.device)
+            torch.zeros(
+                (lm_weight.shape[0], lm_weight.shape[1]),
+                dtype=torch.float32,
+                device=lm_weight.device,
+            )
             if need_dw
             else None
         )
@@ -863,7 +1164,11 @@ class ChunkedLinearCrossEntropyFunction(torch.autograd.Function):
         if need_dw:
             assert dw_f32 is not None
             dw_f32.mul_(post_scale)
-            dw_out = dw_f32 if lm_weight.dtype == torch.float32 else dw_f32.to(lm_weight.dtype)
+            dw_out = (
+                dw_f32
+                if lm_weight.dtype == torch.float32
+                else dw_f32.to(lm_weight.dtype)
+            )
             del dw_f32
         else:
             dw_out = None
@@ -874,15 +1179,17 @@ def chunked_causal_lm_cross_entropy(
     hidden: torch.Tensor,
     lm_weight: torch.Tensor,
     input_ids: torch.Tensor,
-    labels: Optional[torch.Tensor] = None,
+    labels: torch.Tensor | None = None,
     ignore_index: int = -100,
     chunk_size: int = 256,
-    offload_pipeline: Optional[DoubleBufferedOffloadPipeline] = None,
+    offload_pipeline: DoubleBufferedOffloadPipeline | None = None,
 ) -> torch.Tensor:
     """标准自回归偏移 `hidden[:, :-1]` 预测 `target[:, 1:]` 的全序列零截断分块交叉熵"""
     tgt_src = input_ids if labels is None else labels
     if hidden.shape[:2] != tgt_src.shape or hidden.shape[1] < 2:
-        raise ValueError(f"Causal LM Loss 要求序列长度 >= 2 且 hidden {hidden.shape[:2]} 与 labels {tgt_src.shape} 对齐")
+        raise ValueError(
+            f"Causal LM Loss 要求序列长度 >= 2 且 hidden {hidden.shape[:2]} 与 labels {tgt_src.shape} 对齐"
+        )
     shift_h = hidden[:, :-1, :].reshape(-1, hidden.shape[-1])
     shift_t = tgt_src[:, 1:].reshape(-1)
     return ChunkedLinearCrossEntropyFunction.apply(  # type: ignore[return-value]

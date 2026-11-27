@@ -16,6 +16,7 @@ import statistics
 import subprocess
 import sys
 import time
+
 import torch
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,18 +24,18 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from long_ctx_train import (
-    PinnedActivationPool,
     DoubleBufferedOffloadPipeline,
-    LongContextTransformer,
     HybridCPUAdamW,
-    estimate_step_theoretical_flops,
-    run_training_step,
-    theoretical_selective_ckpt_flops_overhead,
+    LongContextTransformer,
+    PinnedActivationPool,
     compute_ring_causal_load_balance,
-    triton_flash_attention,
-    run_multiprocess_ring_verification,
+    estimate_step_theoretical_flops,
     get_flash_attn_counters,
     reset_flash_attn_counters,
+    run_multiprocess_ring_verification,
+    run_training_step,
+    theoretical_selective_ckpt_flops_overhead,
+    triton_flash_attention,
 )
 
 
@@ -62,7 +63,7 @@ def probe_max_seq_in_subprocess(
             opt_kind,
         ]
         try:
-            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
+            proc = subprocess.run(cmd, capture_output=True, timeout=180)
         except subprocess.TimeoutExpired:
             break
         if proc.returncode == 0:
@@ -99,7 +100,9 @@ def _execute_single_probe(seq_len: int, mode: str, opt_kind: str) -> None:
     if mode in ("hybrid_async_offload", "hybrid_sync_offload"):
         slot_b = seq_len * model.cfg.hidden_dim * 2 + 4096
         pool = PinnedActivationPool(num_slots=model.cfg.num_layers, slot_bytes=slot_b)
-        pipe = DoubleBufferedOffloadPipeline(pool, device=device, sync_debug_mode=(mode == "hybrid_sync_offload"))
+        pipe = DoubleBufferedOffloadPipeline(
+            pool, device=device, sync_debug_mode=(mode == "hybrid_sync_offload")
+        )
         n_off = model.cfg.num_layers
 
     for _ in range(2):
@@ -114,7 +117,9 @@ def _execute_single_probe(seq_len: int, mode: str, opt_kind: str) -> None:
         )
 
 
-def bench_modes_memory_and_throughput(model: LongContextTransformer, device: torch.device):
+def bench_modes_memory_and_throughput(
+    model: LongContextTransformer, device: torch.device
+):
     """在 S=2048 与 S=4096 下对比五种策略的真实激活显存峰值与 ABA 交替中位数训练步耗时"""
     cfg = model.cfg
     results = {}
@@ -123,7 +128,9 @@ def bench_modes_memory_and_throughput(model: LongContextTransformer, device: tor
         inp = torch.randint(10, 50000, (1, seq_len), device=device)
         slot_b = seq_len * cfg.hidden_dim * 2 + 4096
         pool = PinnedActivationPool(num_slots=cfg.num_layers, slot_bytes=slot_b)
-        pipe_async = DoubleBufferedOffloadPipeline(pool, device=device, sync_debug_mode=False)
+        pipe_async = DoubleBufferedOffloadPipeline(
+            pool, device=device, sync_debug_mode=False
+        )
 
         modes_to_run = [
             "eager_sdpa_full_logits",
@@ -164,7 +171,13 @@ def bench_modes_memory_and_throughput(model: LongContextTransformer, device: tor
             except RuntimeError as exc:
                 if "out of memory" in str(exc).lower():
                     torch.cuda.empty_cache()
-                    seq_res[m] = {"status": "OOM", "step_ms": 0.0, "fwd_act_mb": 0.0, "act_peak_mb": 0.0, "total_peak_mb": 0.0}
+                    seq_res[m] = {
+                        "status": "OOM",
+                        "step_ms": 0.0,
+                        "fwd_act_mb": 0.0,
+                        "act_peak_mb": 0.0,
+                        "total_peak_mb": 0.0,
+                    }
                 else:
                     raise
 
@@ -195,7 +208,9 @@ def bench_modes_memory_and_throughput(model: LongContextTransformer, device: tor
     return results
 
 
-def bench_consumed_offload_dma_overlap_aba(model: LongContextTransformer, device: torch.device):
+def bench_consumed_offload_dma_overlap_aba(
+    model: LongContextTransformer, device: torch.device
+):
     """
     真实消费激活路径上的 PCIe DMA 双流掩盖率配对 ABA 实测 (`B=4, S=2048` = 8,192 tokens/step，24 层主干全卸载)：
     对比完全相同数学路径下的：
@@ -208,16 +223,24 @@ def bench_consumed_offload_dma_overlap_aba(model: LongContextTransformer, device
     inp = torch.randint(10, 50000, (B, S), device=device)
     dy = torch.randn((B, S, cfg.hidden_dim), dtype=torch.bfloat16, device=device)
     act_bytes_per_layer = B * S * cfg.hidden_dim * 2
-    pool = PinnedActivationPool(num_slots=cfg.num_layers, slot_bytes=act_bytes_per_layer + 4096)
+    pool = PinnedActivationPool(
+        num_slots=cfg.num_layers, slot_bytes=act_bytes_per_layer + 4096
+    )
 
     pipe_sync = DoubleBufferedOffloadPipeline(pool, device=device, sync_debug_mode=True)
-    pipe_async = DoubleBufferedOffloadPipeline(pool, device=device, sync_debug_mode=False)
+    pipe_async = DoubleBufferedOffloadPipeline(
+        pool, device=device, sync_debug_mode=False
+    )
 
     # 1. 单独用硬件 CUDA Event 测量 24 层激活在 PCIe 上的纯物理 D2H + H2D 往返耗时
     dummy_gpu = torch.randn((B, S, cfg.hidden_dim), dtype=torch.bfloat16, device=device)
     for _ in range(2):
         for sl in pool.slots:
-            v = sl.buffer[:act_bytes_per_layer].view(torch.bfloat16).reshape(B, S, cfg.hidden_dim)
+            v = (
+                sl.buffer[:act_bytes_per_layer]
+                .view(torch.bfloat16)
+                .reshape(B, S, cfg.hidden_dim)
+            )
             v.copy_(dummy_gpu, non_blocking=True)
             dummy_gpu.copy_(v, non_blocking=True)
     torch.cuda.synchronize(device)
@@ -227,27 +250,45 @@ def bench_consumed_offload_dma_overlap_aba(model: LongContextTransformer, device
     ev_s.record()
     for _ in range(5):
         for sl in pool.slots:
-            v = sl.buffer[:act_bytes_per_layer].view(torch.bfloat16).reshape(B, S, cfg.hidden_dim)
+            v = (
+                sl.buffer[:act_bytes_per_layer]
+                .view(torch.bfloat16)
+                .reshape(B, S, cfg.hidden_dim)
+            )
             v.copy_(dummy_gpu, non_blocking=True)
         for sl in pool.slots:
-            v = sl.buffer[:act_bytes_per_layer].view(torch.bfloat16).reshape(B, S, cfg.hidden_dim)
+            v = (
+                sl.buffer[:act_bytes_per_layer]
+                .view(torch.bfloat16)
+                .reshape(B, S, cfg.hidden_dim)
+            )
             dummy_gpu.copy_(v, non_blocking=True)
     ev_e.record()
     torch.cuda.synchronize(device)
     t_pcie_raw_ms = ev_s.elapsed_time(ev_e) / 5.0
     del dummy_gpu
 
-    def _time_backbone_fwd_bwd(pipe: DoubleBufferedOffloadPipeline, is_async: bool) -> float:
+    def _time_backbone_fwd_bwd(
+        pipe: DoubleBufferedOffloadPipeline,
+        is_async: bool,
+        _inp: torch.Tensor = inp,
+        _dy: torch.Tensor = dy,
+    ) -> float:
         model.zero_grad(set_to_none=True)
         torch.cuda.synchronize(device)
         run_mode = "hybrid_async_offload" if is_async else "hybrid_sync_offload"
         e0 = torch.cuda.Event(enable_timing=True)
         e1 = torch.cuda.Event(enable_timing=True)
         e0.record()
-        h = model.forward_hidden(inp, mode=run_mode, offload_pipeline=pipe, num_offload_layers=cfg.num_layers)
+        h = model.forward_hidden(
+            _inp,
+            mode=run_mode,
+            offload_pipeline=pipe,
+            num_offload_layers=cfg.num_layers,
+        )
         if is_async:
             pipe.trigger_prefetch_latest()
-        h.backward(dy)
+        h.backward(_dy)
         e1.record()
         torch.cuda.synchronize(device)
         return float(e0.elapsed_time(e1))
@@ -293,12 +334,16 @@ def main():
     torch.cuda.set_per_process_memory_fraction(0.96, device)
     props = torch.cuda.get_device_properties(0)
 
-    model = LongContextTransformer.from_qwen2_pretrained(device=device, dtype=torch.bfloat16, max_seq_len=32768)
+    model = LongContextTransformer.from_qwen2_pretrained(
+        device=device, dtype=torch.bfloat16, max_seq_len=32768
+    )
     cfg = model.cfg
     param_m = sum(p.numel() for p in model.parameters()) / 1e6
 
     print("=" * 84)
-    print(f"[Hardware] {props.name} ({props.multi_processor_count} SMs, {props.total_memory / (1024**3):.2f} GB)")
+    print(
+        f"[Hardware] {props.name} ({props.multi_processor_count} SMs, {props.total_memory / (1024**3):.2f} GB)"
+    )
     print(
         f"[Model]    Real Pretrained Qwen2.5-0.5B-Instruct ({param_m:.1f}M Params, {cfg.num_layers} Layers, "
         f"Hidden={cfg.hidden_dim}, Inter={cfg.intermediate_dim}, {cfg.num_q_heads}Q/{cfg.num_kv_heads}KV, Vocab={cfg.vocab_size}, BF16)"
@@ -312,13 +357,21 @@ def main():
     exp2 = bench_consumed_offload_dma_overlap_aba(model, device)
 
     # 实验 3：分布式多进程 ZigZag vs Contiguous Ring Attention 实测精度与负载均衡度
-    q_r = torch.randn(1, 256, 14, 64, dtype=torch.float32, device=device, requires_grad=True)
-    k_r = torch.randn(1, 256, 2, 64, dtype=torch.float32, device=device, requires_grad=True)
-    v_r = torch.randn(1, 256, 2, 64, dtype=torch.float32, device=device, requires_grad=True)
+    q_r = torch.randn(
+        1, 256, 14, 64, dtype=torch.float32, device=device, requires_grad=True
+    )
+    k_r = torch.randn(
+        1, 256, 2, 64, dtype=torch.float32, device=device, requires_grad=True
+    )
+    v_r = torch.randn(
+        1, 256, 2, 64, dtype=torch.float32, device=device, requires_grad=True
+    )
     do_r = torch.randn(1, 256, 14, 64, dtype=torch.float32, device=device)
     o_single = triton_flash_attention(q_r, k_r, v_r, is_causal=True)
     o_single.backward(do_r)
-    zz_res = run_multiprocess_ring_verification(q_r, k_r, v_r, do_r, world_size=2, zigzag=True)
+    zz_res = run_multiprocess_ring_verification(
+        q_r, k_r, v_r, do_r, world_size=2, zigzag=True
+    )
     zz_max_grad_err = max(
         (q_r.grad - zz_res["dq"]).abs().max().item(),  # type: ignore[operator]
         (k_r.grad - zz_res["dk"]).abs().max().item(),  # type: ignore[operator]
@@ -330,22 +383,40 @@ def main():
 
     # 实验 4：独立子进程探测真实 24 层 Qwen2.5-0.5B 完整训练步 (Fwd + Full Loss + Bwd + AdamW) 最大可训序列长度
     cands = (1024, 2048, 4096, 8192, 12288, 16384, 20480, 24576, 32768)
-    max_seq_std_gpu_adam = probe_max_seq_in_subprocess("eager_sdpa_full_logits", "gpu_adamw", candidates=cands)
-    max_seq_eager_chunk = probe_max_seq_in_subprocess("eager_sdpa_chunked_ce", "cpu_adamw", candidates=cands)
-    max_seq_sac = probe_max_seq_in_subprocess("sac_triton_flash", "cpu_adamw", candidates=cands)
-    max_seq_hybrid = probe_max_seq_in_subprocess("hybrid_async_offload", "cpu_adamw", candidates=cands)
+    max_seq_std_gpu_adam = probe_max_seq_in_subprocess(
+        "eager_sdpa_full_logits", "gpu_adamw", candidates=cands
+    )
+    max_seq_eager_chunk = probe_max_seq_in_subprocess(
+        "eager_sdpa_chunked_ce", "cpu_adamw", candidates=cands
+    )
+    max_seq_sac = probe_max_seq_in_subprocess(
+        "sac_triton_flash", "cpu_adamw", candidates=cands
+    )
+    max_seq_hybrid = probe_max_seq_in_subprocess(
+        "hybrid_async_offload", "cpu_adamw", candidates=cands
+    )
 
     r2k = exp1[2048]
     r4k = exp1[4096]
-    sac_overhead_4k = theoretical_selective_ckpt_flops_overhead(
-        4096, cfg.hidden_dim, cfg.intermediate_dim, cfg.num_q_heads, cfg.num_kv_heads, cfg.head_dim
-    ) * 100.0
+    sac_overhead_4k = (
+        theoretical_selective_ckpt_flops_overhead(
+            4096,
+            cfg.hidden_dim,
+            cfg.intermediate_dim,
+            cfg.num_q_heads,
+            cfg.num_kv_heads,
+            cfg.head_dim,
+        )
+        * 100.0
+    )
 
     # 计算 S=4096 下有效训练 TFLOPS 与硬件 MFU (RTX 5060 Laptop BF16 Tensor Core 峰值参考)
     flops_4k = estimate_step_theoretical_flops(cfg, batch_size=1, seq_len=4096)
     sac_tflops_4k = (flops_4k / (r4k["sac_triton_flash"]["step_ms"] / 1000.0)) / 1e12
     full_tflops_4k = (flops_4k / (r4k["full_ckpt"]["step_ms"] / 1000.0)) / 1e12
-    sac_vs_full_speedup = r4k["full_ckpt"]["step_ms"] / r4k["sac_triton_flash"]["step_ms"]
+    sac_vs_full_speedup = (
+        r4k["full_ckpt"]["step_ms"] / r4k["sac_triton_flash"]["step_ms"]
+    )
     speed_desc = (
         f"全步提速 `{sac_vs_full_speedup:.2f}x`"
         if sac_vs_full_speedup >= 1.0
@@ -426,7 +497,7 @@ def main():
         "## 4. 分布式多进程序列并行：ZigZag 负载均衡 Causal Ring Attention 实测",
         "",
         f"- **真实多进程 (`mp.spawn`, `world_size=2`) 梯度核验**：GQA `14Q/2KV` 下双进程环网 P2P 异步传递 `(K, V, dK, dV)`，还原后与单进程全局 FlashAttention 反向梯度最大绝对误差仅为 **`{zz_max_grad_err:.2e}`**。",
-        f"- **`P=4, S=4096` 因果有效计算对数对比**：",
+        "- **`P=4, S=4096` 因果有效计算对数对比**：",
         f"  - 普通顺序切分（Contiguous）各 Rank 有效计算对数：`{lb_p4['contiguous_pairs_per_rank']}`（最大/最小负载悬殊 **`{lb_p4['contiguous_max_min_ratio']:.2f}x`**，慢节点拖慢集群 `{lb_p4['contiguous_straggler_overhead']:.2f}x`）；",
         f"  - **ZigZag 对称首尾分片 `(c_r, c_{{2P-1-r}})`** 各 Rank 有效计算对数：`{lb_p4['zigzag_pairs_per_rank']}`（最大/最小负载比严格等于 **`{lb_p4['zigzag_max_min_ratio']:.2f}x`**，完全消除因果掩码空泡）。",
         "",
@@ -439,7 +510,9 @@ def main():
     ]
 
     report_md = "\n".join(lines) + "\n"
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_training_benchmark_report.md")
+    out_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "local_training_benchmark_report.md"
+    )
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(report_md)
 

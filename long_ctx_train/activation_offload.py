@@ -18,7 +18,7 @@
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+
 import torch
 
 
@@ -29,7 +29,7 @@ class ActivationSlot:
     in_use: bool
     d2h_done_event: torch.cuda.Event
     h2d_consumed_event: torch.cuda.Event
-    shape: Tuple[int, ...] = ()
+    shape: tuple[int, ...] = ()
     dtype: torch.dtype = torch.float16
     nbytes: int = 0
 
@@ -44,16 +44,25 @@ class PinnedActivationPool:
         strict_capacity: bool = False,
     ):
         if num_slots < 1 or slot_bytes < 256:
-            raise ValueError(f"num_slots ({num_slots}) 必须 >= 1 且 slot_bytes ({slot_bytes}) >= 256")
+            raise ValueError(
+                f"num_slots ({num_slots}) 必须 >= 1 且 slot_bytes ({slot_bytes}) >= 256"
+            )
         self.aligned_slot_bytes = (slot_bytes + 255) & ~255
         self.strict_capacity = strict_capacity
-        self.slots: List[ActivationSlot] = [
+        self.slots: list[ActivationSlot] = [
             ActivationSlot(
                 slot_id=i,
-                buffer=torch.empty((self.aligned_slot_bytes,), dtype=torch.uint8, device="cpu", pin_memory=True),
+                buffer=torch.empty(
+                    (self.aligned_slot_bytes,),
+                    dtype=torch.uint8,
+                    device="cpu",
+                    pin_memory=True,
+                ),
                 in_use=False,
                 d2h_done_event=torch.cuda.Event(enable_timing=False, blocking=False),
-                h2d_consumed_event=torch.cuda.Event(enable_timing=False, blocking=False),
+                h2d_consumed_event=torch.cuda.Event(
+                    enable_timing=False, blocking=False
+                ),
             )
             for i in range(num_slots)
         ]
@@ -66,9 +75,11 @@ class PinnedActivationPool:
     def num_active_slots(self) -> int:
         return sum(1 for s in self.slots if s.in_use)
 
-    def acquire_slot(self, nbytes: int, shape: Tuple[int, ...], dtype: torch.dtype) -> ActivationSlot:
+    def acquire_slot(
+        self, nbytes: int, shape: tuple[int, ...], dtype: torch.dtype
+    ) -> ActivationSlot:
         aligned_req = (nbytes + 255) & ~255
-        chosen: Optional[ActivationSlot] = None
+        chosen: ActivationSlot | None = None
         for s in self.slots:
             if not s.in_use:
                 chosen = s
@@ -82,10 +93,14 @@ class PinnedActivationPool:
             alloc_sz = max(self.aligned_slot_bytes, aligned_req)
             chosen = ActivationSlot(
                 slot_id=len(self.slots),
-                buffer=torch.empty((alloc_sz,), dtype=torch.uint8, device="cpu", pin_memory=True),
+                buffer=torch.empty(
+                    (alloc_sz,), dtype=torch.uint8, device="cpu", pin_memory=True
+                ),
                 in_use=False,
                 d2h_done_event=torch.cuda.Event(enable_timing=False, blocking=False),
-                h2d_consumed_event=torch.cuda.Event(enable_timing=False, blocking=False),
+                h2d_consumed_event=torch.cuda.Event(
+                    enable_timing=False, blocking=False
+                ),
             )
             self.slots.append(chosen)
             self.overflow_alloc_count += 1
@@ -94,7 +109,9 @@ class PinnedActivationPool:
             # 槽位当前空闲（in_use == False），可安全扩容而不影响任何在途激活
             chosen.d2h_done_event.synchronize()
             chosen.h2d_consumed_event.synchronize()
-            chosen.buffer = torch.empty((aligned_req,), dtype=torch.uint8, device="cpu", pin_memory=True)
+            chosen.buffer = torch.empty(
+                (aligned_req,), dtype=torch.uint8, device="cpu", pin_memory=True
+            )
 
         chosen.in_use = True
         chosen.shape = shape
@@ -124,9 +141,11 @@ class DoubleBufferedOffloadPipeline:
     def __init__(
         self,
         pool: PinnedActivationPool,
-        device: torch.device = torch.device("cuda:0"),
+        device: torch.device | None = None,
         sync_debug_mode: bool = False,
     ):
+        if device is None:
+            device = torch.device("cuda:0")
         self.pool = pool
         self.device = device
         self.sync_debug_mode = sync_debug_mode
@@ -134,17 +153,17 @@ class DoubleBufferedOffloadPipeline:
         self.h2d_stream = torch.cuda.Stream(device=device, priority=-1)
 
         # 双缓冲 GPU 预取暂存区 (Ping-Pong Staging Buffers)
-        self._staging_bufs: List[Optional[torch.Tensor]] = [None, None]
-        self._staging_free_evs: List[torch.cuda.Event] = [
+        self._staging_bufs: list[torch.Tensor | None] = [None, None]
+        self._staging_free_evs: list[torch.cuda.Event] = [
             torch.cuda.Event(enable_timing=False, blocking=False),
             torch.cuda.Event(enable_timing=False, blocking=False),
         ]
 
         self._next_ticket: int = 0
-        self._active_tickets: Dict[int, ActivationSlot] = {}
-        self._ticket_order: List[int] = []
-        self._ticket_ping: Dict[int, int] = {}
-        self._prefetched_gpu: Dict[int, Tuple[torch.Tensor, torch.cuda.Event, int]] = {}
+        self._active_tickets: dict[int, ActivationSlot] = {}
+        self._ticket_order: list[int] = []
+        self._ticket_ping: dict[int, int] = {}
+        self._prefetched_gpu: dict[int, tuple[torch.Tensor, torch.cuda.Event, int]] = {}
         self.prefetch_hit_count: int = 0
 
     def reset_step(self) -> None:
@@ -207,7 +226,11 @@ class DoubleBufferedOffloadPipeline:
 
     def enqueue_prefetch(self, ticket: int) -> None:
         """在 `h2d_stream` 上异步预取指定 `ticket` 对应的激活张量至双缓冲显存槽"""
-        if self.sync_debug_mode or ticket in self._prefetched_gpu or ticket not in self._active_tickets:
+        if (
+            self.sync_debug_mode
+            or ticket in self._prefetched_gpu
+            or ticket not in self._active_tickets
+        ):
             return
 
         slot = self._active_tickets[ticket]
